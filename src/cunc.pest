@@ -1,0 +1,62 @@
+main = _{ SOI ~ fn_decl* ~ EOI }
+
+fn_decl = {
+    type_spec ~
+    fn_idents ~
+    fn_body
+}
+
+fn_idents = {
+    lc_ident+
+}
+
+fn_body = {
+    "{" ~ statement* ~ expression ~ "}"
+}
+
+type_spec = {
+    ("[" ~ type_fn ~ "]") |
+    ("[" ~ type_vars_decl ~ "=>" ~ type_fn ~ "]")
+}
+
+type_vars_decl = {
+    type_var_decl ~ ("," ~ type_var_decl)*
+}
+
+type_var_decl = {
+    uc_ident ~ lc_ident
+}
+
+type_fn = {
+    (type_single ~ !"->") |
+    (type_single ~ ("->" ~ type_single)+)
+}
+
+type_single = _{
+    "()" |
+    ("(" ~ type_fn ~ ")") |
+    (uc_ident | lc_ident)
+}
+
+statement = {
+    (assignment | expression) ~ ";"
+}
+
+assignment = {
+    "let" ~ lc_ident ~ (":" ~ type_single)? ~ "=" ~ expression
+}
+
+expression = {
+    part+
+}
+
+part = _{
+    lc_ident |
+    "(" ~ expression ~ ")"
+}
+
+uc_ident = @{ ASCII_ALPHA_UPPER ~ ASCII_ALPHANUMERIC* }
+lc_ident = @{ (ASCII_ALPHA_LOWER | "_") ~ ASCII_ALPHANUMERIC* }
+
+WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+COMMENT = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
