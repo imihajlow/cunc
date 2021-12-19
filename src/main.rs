@@ -18,5 +18,5 @@ fn main() {
         ap.refer(&mut fname).add_argument("file", Store, "Program file");
         ap.parse_args_or_exit();
     }
-    parse(&fname).unwrap();
+    println!("{}", parse(&fname).unwrap());
 }

@@ -53,6 +53,68 @@ pub struct Module<Inner> {
     functions: Vec<Function<Inner>>
 }
 
+impl<Inner> Module<Inner> {
+    pub fn new() -> Self {
+        Self {
+            functions: Vec::new()
+        }
+    }
+
+    pub fn push_function(&mut self, f: Function<Inner>) {
+        self.functions.push(f);
+    }
+}
+
+impl UntypedExpression {
+    pub fn new(e: Expression<UntypedExpression>, p: Position) -> Self {
+        Self {
+            e,
+            p
+        }
+    }
+}
+
+impl<Inner> Function<Inner> {
+    pub fn new(name: String, body: Lambda<Inner>, p: Position) -> Self {
+        Self {
+            name,
+            body,
+            p
+        }
+    }
+}
+
+impl Binding {
+    pub fn new(name: String, t: CuncType, p: Position) -> Self {
+        Self {
+            name,
+            t,
+            p
+        }
+    }
+}
+
+impl<Inner> Statement<Inner> {
+    pub fn new_expr(expr: Inner) -> Self {
+        Statement::Expr(Box::new(expr))
+    }
+
+    pub fn new_let(binding: Binding, expr: Inner) -> Self {
+        Statement::Let(binding, Box::new(expr))
+    }
+}
+
+impl<Inner> Lambda<Inner> {
+    pub fn new(params: Vec<Binding>, statements: Vec<Statement<Inner>>, tail: Inner, p: Position) -> Self {
+        Self {
+            params,
+            statements,
+            tail: Box::new(tail),
+            p
+        }
+    }
+}
+
 impl<Inner: fmt::Display> fmt::Display for Expression<Inner> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -95,10 +157,10 @@ impl<Inner: fmt::Display> fmt::Display for Lambda<Inner> {
             f.write_str(&s)?;
         }
         f.write_str(") {\n")?;
-        for s in self.statements.iter().map(|p| format!("{}", p)).intersperse(";\n".to_string()) {
-            f.write_str(&s)?;
+        for s in self.statements.iter() {
+            writeln!(f, "{};", &s)?;
         }
-        write!(f, "{}", self.tail)?;
+        write!(f, "{}\n", self.tail)?;
         f.write_str("}")
     }
 }
@@ -188,7 +250,11 @@ pub fn annotate(expr: UntypedExpression, context: &TypeContext) -> Result<TypedE
                         }
                     }
                 } else {
-                    return Err(Error::new(ErrorCause::NotAFunction, Position::clone(&head.p)));
+                    if typed_parts.len() == 1 {
+                        typed_parts.into_iter().next().unwrap()
+                    } else {
+                        return Err(Error::new(ErrorCause::NotAFunction, Position::clone(&head.p)));
+                    }
                 }
             })
         }
@@ -246,8 +312,10 @@ pub fn annotate_statement(s: Statement<UntypedExpression>, context: &mut TypeCon
             Ok(Statement::Expr(Box::new(annotate(*e, context)?)))
         }
         Let(b, e) => {
+            let annotated = annotate(*e, &context)?;
+            match_types(&b.t, &annotated)?;
             context.set_type(&b.name, &b.t).map_err(|e| Error::new(e, Position::clone(&b.p)))?;
-            Ok(Statement::Let(b, Box::new(annotate(*e, &context)?)))
+            Ok(Statement::Let(b, Box::new(annotated)))
         }
     }
 }

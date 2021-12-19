@@ -1,8 +1,8 @@
-use std::str::FromStr;
+use std::{str::FromStr, io::BufRead};
 use std::collections::btree_set::Union;
 use std::fmt;
 use itertools::Itertools;
-use crate::error::Error;
+use crate::{error::{Error, ErrorCause}, ast::Function};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CuncType {
@@ -36,6 +36,30 @@ pub enum AtomicTypeParseError {
     Empty,
     WrongIntSize,
     Unknown,
+}
+
+impl CuncType {
+    pub fn split_param_type(self) -> Result<(CuncType, CuncType), ErrorCause> {
+        match self {
+            CuncType::Function(parts) => {
+                let count = parts.len();
+                if count == 0 {
+                    return Err(ErrorCause::TooManyArguments);
+                }
+                let mut parts_iter = parts.into_iter();
+                let first = parts_iter.next().unwrap();
+                let rest = match count - 1 {
+                    0 => return Err(ErrorCause::TooManyArguments),
+                    1 => parts_iter.next().unwrap(),
+                    _ => CuncType::Function(parts_iter.collect())
+                };
+                Ok((first, rest))
+            }
+            _ => {
+                Err(ErrorCause::TooManyArguments)
+            }
+        }
+    }
 }
 
 impl FromStr for AtomicType {

@@ -16,7 +16,7 @@ pub enum ErrorCause {
     NotAFunction,
     TooManyArguments,
     TypesMismatch(CuncType, CuncType),
-    AtomicTypeParseError(AtomicTypeParseError)
+    AtomicTypeParseError(AtomicTypeParseError),
 }
 
 impl Error {

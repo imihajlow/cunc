@@ -38,22 +38,41 @@ type_single = _{
     (uc_ident | lc_ident)
 }
 
+var_type_spec = {
+    ":" ~ type_single
+}
+
 statement = {
     (assignment | expression) ~ ";"
 }
 
 assignment = {
-    "let" ~ lc_ident ~ (":" ~ type_single)? ~ "=" ~ expression
+    "let" ~ lc_ident ~ var_type_spec? ~ "=" ~ expression
 }
 
 expression = {
+    application
+}
+
+application = {
     part+
 }
 
 part = _{
+    constant |
     lc_ident |
     "(" ~ expression ~ ")"
 }
+
+constant = _{
+    dec_constant |
+    hex_constant |
+    bin_constant
+}
+
+dec_constant = @{ ("0" ~ !("x" | "b" | '0'..'9')) | ('1'..'9' ~ '0'..'9'*)}
+hex_constant = @{ "0x" ~ ('0'..'9' | 'a'..'f' | 'A'..'F')+}
+bin_constant = @{ "0b" ~ '0'..'1'+ }
 
 uc_ident = @{ ASCII_ALPHA_UPPER ~ ASCII_ALPHANUMERIC* }
 lc_ident = @{ (ASCII_ALPHA_LOWER | "_") ~ ASCII_ALPHANUMERIC* }
