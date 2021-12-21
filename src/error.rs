@@ -1,5 +1,5 @@
 use crate::type_info::AtomicTypeParseError;
-use crate::type_info::CuncType;
+use crate::type_info::TypeExpression;
 use crate::position::Position;
 
 #[derive(Debug)]
@@ -15,7 +15,7 @@ pub enum ErrorCause {
     Redefinition(String),
     NotAFunction,
     TooManyArguments,
-    TypesMismatch(CuncType, CuncType),
+    TypesMismatch(TypeExpression, TypeExpression),
     AtomicTypeParseError(AtomicTypeParseError),
 }
 

@@ -1,10 +1,9 @@
 use std::fmt;
 use itertools::Itertools;
-use crate::type_context::TypeContext;
 use crate::position::Position;
-use crate::error::Error;
-use crate::error::ErrorCause;
-use crate::type_info::*;
+use crate::type_info::TypeExpression;
+use crate::type_info::TypeVars;
+
 
 pub enum Expression<Inner> {
     Application(Vec<Inner>),
@@ -19,7 +18,7 @@ pub struct UntypedExpression {
 }
 
 pub struct TypedExpression {
-    t: CuncType,
+    t: TypeExpression,
     e: Expression<TypedExpression>,
     p: Position,
 }
@@ -34,7 +33,7 @@ pub struct Lambda<Inner> {
 #[derive(Clone)]
 pub struct Binding {
     name: String,
-    t: CuncType,
+    t: Option<TypeExpression>,
     p: Position,
 }
 
@@ -46,6 +45,7 @@ pub enum Statement<Inner> {
 pub struct Function<Inner> {
     name: String,
     body: Lambda<Inner>,
+    type_vars: TypeVars,
     p: Position
 }
 
@@ -75,20 +75,21 @@ impl UntypedExpression {
 }
 
 impl<Inner> Function<Inner> {
-    pub fn new(name: String, body: Lambda<Inner>, p: Position) -> Self {
+    pub fn new(name: String, body: Lambda<Inner>, type_vars: TypeVars, p: Position) -> Self {
         Self {
             name,
             body,
+            type_vars,
             p
         }
     }
 }
 
 impl Binding {
-    pub fn new(name: String, t: CuncType, p: Position) -> Self {
+    pub fn new(name: String, t: TypeExpression, p: Position) -> Self {
         Self {
             name,
-            t,
+            t: Some(t),
             p
         }
     }
@@ -167,7 +168,10 @@ impl<Inner: fmt::Display> fmt::Display for Lambda<Inner> {
 
 impl fmt::Display for Binding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", &self.name, &self.t)
+        match &self.t {
+            Some(t) => write!(f, "{}: {}", &self.name, t),
+            None => write!(f, "{}", &self.name)
+        }
     }
 }
 
@@ -195,7 +199,7 @@ impl<Inner: fmt::Display> fmt::Display for Module<Inner> {
     }
 }
 
-fn match_types(outer_type: &CuncType, inner_expr: &TypedExpression) -> Result<(), Error> {
+/*fn match_types(outer_type: &CuncType, inner_expr: &TypedExpression) -> Result<(), Error> {
     if outer_type != &inner_expr.t {
         Err(Error::new(ErrorCause::TypesMismatch(
             CuncType::clone(&inner_expr.t),
@@ -318,4 +322,4 @@ pub fn annotate_statement(s: Statement<UntypedExpression>, context: &mut TypeCon
             Ok(Statement::Let(b, Box::new(annotated)))
         }
     }
-}
+}*/

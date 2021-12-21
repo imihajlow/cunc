@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use crate::error::{ErrorCause};
-use crate::type_info::CuncType;
+use crate::type_info::TypeExpression;
 
 pub struct TypeContext<'a> {
     parent: Option<&'a Self>,
-    bindings: HashMap<String, CuncType>
+    bindings: HashMap<String, TypeExpression>
 }
 
 impl<'a> TypeContext<'a> {
@@ -23,7 +23,7 @@ impl<'a> TypeContext<'a> {
         }
     }
 
-    pub fn get_type(&self, name: &str) -> Option<&CuncType> {
+    pub fn get_type(&self, name: &str) -> Option<&TypeExpression> {
         self.bindings
             .get(name)
             .or_else(||
@@ -32,11 +32,11 @@ impl<'a> TypeContext<'a> {
             )
     }
 
-    pub fn set_type(&mut self, name: &str, typ: &CuncType) -> Result<(), ErrorCause> {
+    pub fn set_type(&mut self, name: &str, typ: &TypeExpression) -> Result<(), ErrorCause> {
         if self.bindings.contains_key(name) {
             return Err(ErrorCause::Redefinition(name.to_string()));
         }
-        self.bindings.insert(name.to_string(), CuncType::clone(typ));
+        self.bindings.insert(name.to_string(), TypeExpression::clone(typ));
         Ok(())
     }
 }

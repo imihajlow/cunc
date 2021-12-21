@@ -1,14 +1,32 @@
-use std::{str::FromStr, io::BufRead};
-use std::collections::btree_set::Union;
+use crate::util::var_from_number;
+use std::{str::FromStr};
+
 use std::fmt;
 use itertools::Itertools;
-use crate::{error::{Error, ErrorCause}, ast::Function};
+use crate::{error::{ErrorCause}};
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum CuncType {
-    Unknown,
-    Atomic(AtomicType),
-    Function(Vec<CuncType>)
+#[derive(Debug, Clone)]
+pub struct TypeInfo {
+    expr: TypeExpression,
+    vars: TypeVars
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeExpression {
+    AtomicType(AtomicType),
+    Var(usize),
+    Function(Vec<TypeExpression>),
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeVars {
+    range: usize,
+    constraints: Vec<TypeConstraint>
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeConstraint {
+    // TODO
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -27,7 +45,6 @@ pub struct IntType {
 #[derive(Clone, Debug, PartialEq)]
 pub enum AtomicType {
     Void,
-    AnyNumber,
     Int(IntType),
 }
 
@@ -38,10 +55,16 @@ pub enum AtomicTypeParseError {
     Unknown,
 }
 
-impl CuncType {
-    pub fn split_param_type(self) -> Result<(CuncType, CuncType), ErrorCause> {
+impl TypeVars {
+    pub fn is_empty(&self) -> bool {
+        self.range == 0
+    }
+}
+
+impl TypeExpression {
+    pub fn split_param_type(self) -> Result<(Self, Self), ErrorCause> {
         match self {
-            CuncType::Function(parts) => {
+            Self::Function(parts) => {
                 let count = parts.len();
                 if count == 0 {
                     return Err(ErrorCause::TooManyArguments);
@@ -51,13 +74,22 @@ impl CuncType {
                 let rest = match count - 1 {
                     0 => return Err(ErrorCause::TooManyArguments),
                     1 => parts_iter.next().unwrap(),
-                    _ => CuncType::Function(parts_iter.collect())
+                    _ => Self::Function(parts_iter.collect())
                 };
                 Ok((first, rest))
             }
             _ => {
                 Err(ErrorCause::TooManyArguments)
             }
+        }
+    }
+}
+
+impl IntType {
+    pub fn new(signed: bool, bits: IntBits) -> Self {
+        Self {
+            signed,
+            bits
         }
     }
 }
@@ -88,24 +120,44 @@ impl FromStr for AtomicType {
     }
 }
 
-pub fn collect_type<'a, I>(iter: &'a mut I) -> Option<CuncType>
-where I: Iterator<Item = &'a CuncType> {
-    let types: Vec<_> = iter.collect();
-    if types.len() == 0 {
-        None
-    } else if types.len() == 1 {
-        Some(CuncType::clone(types[0]))
-    } else {
-        Some(CuncType::Function(types.into_iter().map(CuncType::clone).collect()))
+// pub fn collect_type<'a, I>(iter: &'a mut I) -> Option<CuncType>
+// where I: Iterator<Item = &'a CuncType> {
+//     let types: Vec<_> = iter.collect();
+//     if types.len() == 0 {
+//         None
+//     } else if types.len() == 1 {
+//         Some(CuncType::clone(types[0]))
+//     } else {
+//         Some(CuncType::Function(types.into_iter().map(CuncType::clone).collect()))
+//     }
+// }
+
+impl fmt::Display for TypeInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.vars.is_empty() {
+            write!(f, "{} => ", self.vars)?;
+        }
+        write!(f, "{}", self.expr)
     }
 }
 
-impl fmt::Display for CuncType {
+impl fmt::Display for TypeVars {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use CuncType::*;
+        for s in (0..self.range)
+            .map(var_from_number)
+            .intersperse(", ".to_string()) {
+            f.write_str(&s)?;       
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for TypeExpression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use TypeExpression::*;
         match self {
-            Unknown => write!(f, "?"),
-            Atomic(t) => write!(f, "{}", t),
+            AtomicType(t) => write!(f, "{}", t),
+            Var(n) => f.write_str(&var_from_number(*n)),
             Function(ts) => {
                 f.write_str("(")?;
                 for s in ts.iter().map(|t| format!("{}", t)).intersperse(" -> ".to_string()) {
@@ -122,7 +174,6 @@ impl fmt::Display for AtomicType {
         use AtomicType::*;
         match self {
             Void => f.write_str("()"),
-            AnyNumber => f.write_str("Num"),
             Int(t) => write!(f, "{}", t)
         }
     }
