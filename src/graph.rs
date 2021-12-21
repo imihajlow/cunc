@@ -116,6 +116,52 @@ impl Graph {
         }
         (result_graph, v_to_scc)
     }
+
+    /// Find an ordering of the vertices,
+    /// such that if there's an edge from V to W,
+    /// then W comes before V in the ordering.
+    /// Returns None if there are loops in the graph.
+    pub fn inverse_topsort(&self) -> Option<Vec<usize>> {
+        let n = self.edges.len();
+        let mut result: Vec<usize> = Vec::new();
+        let mut visited = vec![false; n];
+        let mut visited_loop = vec![false; n];
+
+        fn dfs(
+            v: usize,
+            edges: &Vec<Vec<usize>>,
+            visited: &mut Vec<bool>,
+            visited_loop: &mut Vec<bool>,
+            result: &mut Vec<usize>
+            ) -> bool {
+            if visited[v] {
+                return true;
+            }
+            if visited_loop[v] {
+                return false;
+            }
+            visited_loop[v] = true;
+            for w in edges[v].iter() {
+                let r = dfs(*w, edges, visited, visited_loop, result);
+                if !r {
+                    return false;
+                }
+            }
+            visited_loop[v] = false;
+            visited[v] = true;
+            result.push(v);
+            return true;
+        }
+        for i in 0..n {
+            if !visited[i] {
+                let r = dfs(i, &self.edges, &mut visited, &mut visited_loop, &mut result);
+                if !r {
+                    return None;
+                }
+            }
+        }
+        Some(result)
+    }
 }
 
 #[cfg(test)]
@@ -155,5 +201,39 @@ mod tests {
         assert!(!scc.has_edge(m[8], m[8]));
         assert!(scc.has_edge(m[6], m[7]));
         assert!(scc.has_edge(m[6], m[8]));
+    }
+
+    #[test]
+    fn test_topsort_fail() {
+        let mut g = Graph::new();
+        g.add_edge(0, 1);
+        g.add_edge(1, 0);
+        assert!(g.inverse_topsort().is_none());
+    }
+
+    fn pos(v: &Vec<usize>, x: usize) -> usize {
+        v.iter().position(|y| *y == x).unwrap()
+    }
+
+    #[test]
+    fn test_topsort() {
+        let mut g = Graph::new();
+        g.add_edge(0, 4);
+        g.add_edge(1, 2);
+        g.add_edge(1, 3);
+        g.add_edge(4, 3);
+        g.add_edge(4, 1);
+        let r = g.inverse_topsort().unwrap();
+        assert!(r.len() == 5);
+        let p0 = pos(&r, 0);
+        let p1 = pos(&r, 1);
+        let p2 = pos(&r, 2);
+        let p3 = pos(&r, 3);
+        let p4 = pos(&r, 4);
+        assert!(p0 > p4);
+        assert!(p1 > p2);
+        assert!(p1 > p3);
+        assert!(p4 > p3);
+        assert!(p4 > p1);
     }
 }
