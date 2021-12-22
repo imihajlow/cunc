@@ -5,9 +5,11 @@ mod type_context;
 mod generic_context;
 mod error;
 mod position;
-// mod parse;
+mod parse;
 mod util;
 mod graph;
+mod name_context;
+use crate::parse::parse;
 use argparse::{ArgumentParser, Store};
 #[macro_use]
 extern crate pest_derive;
@@ -22,5 +24,5 @@ fn main() {
         ap.refer(&mut fname).add_argument("file", Store, "Program file");
         ap.parse_args_or_exit();
     }
-    // println!("{}", parse(&fname).unwrap());
+    println!("{}", parse(&fname).unwrap());
 }

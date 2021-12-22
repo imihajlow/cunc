@@ -1,3 +1,7 @@
+
+use std::collections::HashSet;
+use crate::graph::ObjectGraph;
+use crate::name_context::NameContext;
 use std::fmt;
 use itertools::Itertools;
 use crate::position::Position;
@@ -12,8 +16,19 @@ pub enum Expression<Inner> {
     Abstraction(Lambda<Inner>)
 }
 
+pub trait AnyTypedExpression {
+    fn get_expression(&self) -> &Expression<Self> where Self: Sized;
+    fn get_position(&self) -> &Position;
+}
+
 pub struct UntypedExpression {
     e: Expression<UntypedExpression>,
+    p: Position,
+}
+
+pub struct MaybeTypedExpression {
+    t: Option<TypeExpression>,
+    e: Expression<MaybeTypedExpression>,
     p: Position,
 }
 
@@ -25,6 +40,7 @@ pub struct TypedExpression {
 
 pub struct Lambda<Inner> {
     params: Vec<Binding>,
+    return_type: Option<TypeExpression>,
     statements: Vec<Statement<Inner>>,
     tail: Box<Inner>,
     p: Position
@@ -65,6 +81,48 @@ impl<Inner> Module<Inner> {
     }
 }
 
+impl<Inner> Module<Inner> where Inner: AnyTypedExpression {
+    fn build_dependency_graph(&self) {
+        let mut context = NameContext::new();
+        for function in self.functions.iter() {
+            context.add_name(&function.name);
+        }
+        let mut result: ObjectGraph<String> = ObjectGraph::new();
+        for function in self.functions.iter() {
+            let mut refs: HashSet<String> = HashSet::new();
+            function.body.collect_refs(&mut context, &mut refs);
+            for name in refs.into_iter() {
+                result.add_edge_unique(&function.name, &name);
+            }
+        }
+
+        todo!()
+    }
+}
+
+impl<Inner> Expression<Inner> where Inner: AnyTypedExpression {
+    /// Collect toplevel names referenced by this expression.
+    fn collect_refs(&self, context: &mut NameContext, result: &mut HashSet<String>) {
+        use Expression::*;
+        match self {
+            Application(v) => {
+                for e in v.iter() {
+                    e.get_expression().collect_refs(context, result);
+                }
+            }
+            IntConstant(_) => (),
+            Variable(n) => {
+                if context.is_toplevel(n) {
+                    result.insert(n.to_owned());
+                }
+            }
+            Abstraction(l) => {
+                l.collect_refs(context, result);
+            }
+        }
+    }
+}
+
 impl UntypedExpression {
     pub fn new(e: Expression<UntypedExpression>, p: Position) -> Self {
         Self {
@@ -73,6 +131,55 @@ impl UntypedExpression {
         }
     }
 }
+
+impl AnyTypedExpression for UntypedExpression {
+    fn get_expression(&self) -> &Expression<Self> {
+        &self.e
+    }
+
+    fn get_position(&self) -> &Position {
+        &self.p
+    }
+}
+
+impl MaybeTypedExpression {
+    pub fn new(e: Expression<MaybeTypedExpression>, p: Position) -> Self {
+        Self {
+            e,
+            p,
+            t: None
+        }
+    }
+
+    pub fn new_with_type(e: Expression<MaybeTypedExpression>, p: Position, t: TypeExpression) -> Self {
+        Self {
+            e,
+            p,
+            t: Some(t)
+        }
+    }
+}
+
+impl AnyTypedExpression for MaybeTypedExpression {
+    fn get_expression(&self) -> &Expression<Self> {
+        &self.e
+    }
+
+    fn get_position(&self) -> &Position {
+        &self.p
+    }
+}
+
+impl AnyTypedExpression for TypedExpression {
+    fn get_expression(&self) -> &Expression<Self> {
+        &self.e
+    }
+
+    fn get_position(&self) -> &Position {
+        &self.p
+    }
+}
+
 
 impl<Inner> Function<Inner> {
     pub fn new(name: String, body: Lambda<Inner>, type_vars: TypeVars, p: Position) -> Self {
@@ -93,6 +200,22 @@ impl Binding {
             p
         }
     }
+
+    pub fn new_untyped(name: String, p: Position) -> Self {
+        Self {
+            name,
+            t: None,
+            p
+        }
+    }
+
+    pub fn new_with_option(name: String, t: Option<TypeExpression>, p: Position) -> Self {
+        Self {
+            name,
+            t,
+            p
+        }
+    }
 }
 
 impl<Inner> Statement<Inner> {
@@ -106,13 +229,38 @@ impl<Inner> Statement<Inner> {
 }
 
 impl<Inner> Lambda<Inner> {
-    pub fn new(params: Vec<Binding>, statements: Vec<Statement<Inner>>, tail: Inner, p: Position) -> Self {
+    pub fn new(params: Vec<Binding>, return_type: Option<TypeExpression>, statements: Vec<Statement<Inner>>, tail: Inner, p: Position) -> Self {
         Self {
             params,
+            return_type,
             statements,
             tail: Box::new(tail),
             p
         }
+    }
+}
+
+
+impl<Inner> Lambda<Inner> where Inner: AnyTypedExpression {
+    fn collect_refs(&self, context: &mut NameContext, result: &mut HashSet<String>) {
+        context.push();
+        for n in self.params.iter() {
+            context.add_name(&n.name);
+        }
+        for s in self.statements.iter() {
+            use Statement::*;
+            match s {
+                Let(name, e) => {
+                    e.get_expression().collect_refs(context, result);
+                    context.add_name(&name.name);
+                }
+                Expr(e) => {
+                    e.get_expression().collect_refs(context, result);
+                }
+            }
+        }
+        self.tail.get_expression().collect_refs(context, result);
+        context.pop();
     }
 }
 
@@ -145,6 +293,15 @@ impl fmt::Display for UntypedExpression {
     }
 }
 
+impl fmt::Display for MaybeTypedExpression {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.t {
+            None => write!(f, "{}", self.e),
+            Some(t) => write!(f, "{}: {}", self.e, t),
+        }
+    }
+}
+
 impl fmt::Display for TypedExpression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.e, self.t)
@@ -162,7 +319,11 @@ impl<Inner: fmt::Display> fmt::Display for Lambda<Inner> {
             writeln!(f, "{};", &s)?;
         }
         write!(f, "{}\n", self.tail)?;
-        f.write_str("}")
+        f.write_str("}")?;
+        if let Some(t) = &self.return_type {
+            write!(f, " -> {}", t)?;
+        }
+        Ok(())
     }
 }
 
@@ -199,127 +360,3 @@ impl<Inner: fmt::Display> fmt::Display for Module<Inner> {
     }
 }
 
-/*fn match_types(outer_type: &CuncType, inner_expr: &TypedExpression) -> Result<(), Error> {
-    if outer_type != &inner_expr.t {
-        Err(Error::new(ErrorCause::TypesMismatch(
-            CuncType::clone(&inner_expr.t),
-            CuncType::clone(outer_type)), Position::clone(&inner_expr.p)))
-    } else {
-        Ok(())
-    }
-}
-
-pub fn annotate(expr: UntypedExpression, context: &TypeContext) -> Result<TypedExpression, Error> {
-    use Expression::*;
-    match expr.e {
-        Application(parts) => {
-            Ok(if parts.len() == 0 {
-                // WTF? TODO
-                TypedExpression {
-                    t: CuncType::Atomic(AtomicType::Void),
-                    e: Expression::Application(Vec::new()),
-                    p: expr.p
-                }
-            } else {
-                let typed_parts_result : Result<Vec<_>, _> = 
-                    parts.into_iter().map(|e| annotate(e, context)).collect();
-                let typed_parts = typed_parts_result?;
-                let mut parts_iter = typed_parts.iter();
-                let head = parts_iter.next().unwrap();
-                let head_type = &head.t;
-                if let CuncType::Function(arg_types) = head_type {
-                    let mut arg_type_iter = arg_types.iter();
-                    loop {
-                        let cur_part = if let Some(part) = parts_iter.next() {
-                            part
-                        } else {
-                            break;
-                        };
-                        if let Some(t) = arg_type_iter.next() {
-                            match_types(t, cur_part)?;
-                        } else {
-                            return Err(Error::new(ErrorCause::TooManyArguments, Position::clone(&cur_part.p)))
-                        }
-                    }
-                    match collect_type(&mut arg_type_iter) {
-                        Some(t) => {
-                            TypedExpression {
-                                t,
-                                e: Expression::Application(typed_parts),
-                                p: expr.p
-                            }
-                        }
-                        None => {
-                            return Err(Error::new(ErrorCause::TooManyArguments, expr.p))       
-                        }
-                    }
-                } else {
-                    if typed_parts.len() == 1 {
-                        typed_parts.into_iter().next().unwrap()
-                    } else {
-                        return Err(Error::new(ErrorCause::NotAFunction, Position::clone(&head.p)));
-                    }
-                }
-            })
-        }
-        IntConstant(x) => {
-            Ok(TypedExpression {
-                t: CuncType::Atomic(AtomicType::AnyNumber),
-                e: Expression::IntConstant(x),
-                p: expr.p
-            })
-        }
-        Variable(name) => {
-            if let Some(t) = context.get_type(&name) {
-                Ok(TypedExpression {
-                    t: CuncType::clone(t),
-                    e: Expression::Variable(name),
-                    p: expr.p
-                })
-            } else {
-                Err(Error::new(ErrorCause::UnknownIdentifier(name), expr.p))
-            }
-        }
-        Abstraction(Lambda {
-            params,
-            statements,
-            tail,
-            p
-        }) => {
-            let mut inner_context = context.push();
-            for p in params.iter() {
-                inner_context.set_type(&p.name, &p.t).map_err(|e| Error::new(e, Position::clone(&p.p)))?;
-            }
-            let mut annotated_statements: Vec<Statement<TypedExpression>> = Vec::new();
-            for s in statements.into_iter() {
-                annotated_statements.push(annotate_statement(s, &mut inner_context)?);
-            }
-            let annotated_tail: TypedExpression = annotate(*tail, &inner_context)?;
-            Ok(TypedExpression {
-                t: CuncType::clone(&annotated_tail.t),
-                e: Abstraction(Lambda {
-                    params: params,
-                    statements: annotated_statements,
-                    tail: Box::new(annotated_tail),
-                    p
-                }),
-                p: expr.p
-            })
-        }
-    }
-}
-
-pub fn annotate_statement(s: Statement<UntypedExpression>, context: &mut TypeContext) -> Result<Statement<TypedExpression>, Error> {
-    use Statement::*;
-    match s {
-        Expr(e) => {
-            Ok(Statement::Expr(Box::new(annotate(*e, context)?)))
-        }
-        Let(b, e) => {
-            let annotated = annotate(*e, &context)?;
-            match_types(&b.t, &annotated)?;
-            context.set_type(&b.name, &b.t).map_err(|e| Error::new(e, Position::clone(&b.p)))?;
-            Ok(Statement::Let(b, Box::new(annotated)))
-        }
-    }
-}*/

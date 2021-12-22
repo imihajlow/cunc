@@ -1,7 +1,7 @@
 main = _{ SOI ~ fn_decl* ~ EOI }
 
 fn_decl = {
-    type_spec ~
+    type_spec? ~
     fn_idents ~
     fn_body
 }

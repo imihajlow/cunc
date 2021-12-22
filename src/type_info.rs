@@ -56,6 +56,12 @@ pub enum AtomicTypeParseError {
 }
 
 impl TypeVars {
+    pub fn new(range: usize) -> Self {
+        Self {
+            range,
+            constraints: Vec::new(),
+        }
+    }
     pub fn is_empty(&self) -> bool {
         self.range == 0
     }

@@ -14,6 +14,7 @@ pub enum ErrorCause {
     UnknownIdentifier(String),
     Redefinition(String),
     NotAFunction,
+    IsAFunction,
     TooManyArguments,
     TypesMismatch(TypeExpression, TypeExpression),
     AtomicTypeParseError(AtomicTypeParseError),

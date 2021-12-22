@@ -1,9 +1,10 @@
-use crate::position::Position;
+use std::collections::HashMap;
 use crate::position::position_from_span;
+use crate::type_info::TypeVars;
 use pest::iterators::Pair;
 use crate::error::Error;
-use crate::type_context::TypeContext;
-use crate::type_info::{CuncType, AtomicType};
+
+use crate::type_info::{TypeExpression, AtomicType};
 use crate::{ast::*, error::ErrorCause};
 use pest::Parser;
 
@@ -11,7 +12,7 @@ use pest::Parser;
 #[grammar = "cunc.pest"]
 pub struct CuncParser;
 
-pub fn parse(fname: &str) -> Result<Module<TypedExpression>, Error> {
+pub fn parse(fname: &str) -> Result<Module<MaybeTypedExpression>, Error> {
     let code = std::fs::read_to_string(&fname).unwrap();
     let root = match CuncParser::parse(Rule::main, &code) {
         Ok(ast) => ast,
@@ -19,99 +20,160 @@ pub fn parse(fname: &str) -> Result<Module<TypedExpression>, Error> {
             return Err(Error::new(ErrorCause::SyntaxError(e.to_string()), e.line_col));
         }
     };
-    println!("{}", &root);
+    // println!("{}", &root);
 
-    // collect all functions
-    struct FunctionRec<'a> {
-        t: CuncType,
-        idents: Pair<'a, Rule>,
-        body: Pair<'a, Rule>,
-        pos: Position
-    }
-    let mut functions: Vec<FunctionRec> = Vec::new();
+    let mut result: Module<MaybeTypedExpression> = Module::new();
     for node in root.into_iter() {
         match node.as_rule() {
             Rule::fn_decl => {
-                let pos = position_from_span(&node.as_span());
-                let mut inner = node.into_inner();
-                let type_spec = build_type(inner.next().unwrap())?;
-                let fc_idents = inner.next().unwrap();
-                let fn_body = inner.next().unwrap();
-                functions.push(FunctionRec {
-                    t: type_spec,
-                    idents: fc_idents,
-                    body: fn_body,
-                    pos: pos
-                })
-
+                let fun = parse_function(node)?;
+                result.push_function(fun);
             }
             Rule::EOI => (),
             _ => unreachable!()
         }
     }
 
-    // store function types in a type context
-    let mut context = TypeContext::new();
-    struct FunctionBodyRec<'a> {
-        name: &'a str,
-        t: CuncType,
-        param_names: Vec<(&'a str, Position)>,
-        body: Pair<'a, Rule>,
-        pos: Position
-    }
-    let mut bodies: Vec<FunctionBodyRec> = Vec::new();
-    for rec in functions.into_iter() {
-        let mut fc_idents_iter = rec.idents.into_inner()
-            .map(|p| (p.as_str(), position_from_span(&p.as_span())));
-        let (fn_name, fn_name_pos) = fc_idents_iter.next().unwrap();
-        context.set_type(fn_name, &rec.t)
-            .map_err(|cause| Error::new(cause, fn_name_pos))?;
-        bodies.push(FunctionBodyRec {
-            name: fn_name,
-            t: rec.t,
-            param_names: fc_idents_iter.collect(),
-            body: rec.body,
-            pos: rec.pos
-        });
-    }
-
-    // process function bodies
-    let mut module: Module<TypedExpression> = Module::new();
-    for rec in bodies.into_iter() {
-        let mut remaining_type = rec.t;
-        let mut param_bindings: Vec<Binding> = Vec::new();
-        let mut inner_context = context.push();
-        for (name, pos) in rec.param_names.into_iter() {
-            let (head, tail) = remaining_type.split_param_type()
-                .map_err(|cause| Error::new(cause, Position::clone(&pos)))?;
-            remaining_type = tail;
-            inner_context.set_type(name, &head).map_err(|c| Error::new(c, Position::clone(&pos)))?;
-            param_bindings.push(Binding::new(name.to_owned(), head, pos));
-        }
-        let body_pos = position_from_span(&rec.body.as_span());
-        let mut statements: Vec<Statement<TypedExpression>> = Vec::new();
-        let mut tail: Option<TypedExpression> = None;
-        for pair in rec.body.into_inner() {
-            match pair.as_rule() {
-                Rule::statement => {
-                    let untyped = parse_statement(pair)?;
-                    statements.push(annotate_statement(untyped, &mut inner_context)?);
-                }
-                Rule::expression => {
-                    let expr = parse_expression(pair)?;
-                    tail = Some(annotate(expr, &inner_context)?);
-                }
-                _ => unreachable!()
-            }
-        }
-        let lambda = Lambda::new(param_bindings, statements, tail.unwrap(), body_pos);
-        let function = Function::new(rec.name.to_string(), lambda, rec.pos);
-        module.push_function(function);
-    }
-    Ok(module)
+    Ok(result)
 }
 
-fn parse_statement(pair: Pair<Rule>) -> Result<Statement<UntypedExpression>, Error> {
+struct TypeVarAllocator {
+    m: HashMap<String, usize>,
+    cur_index: usize,
+    new_vars_allowed: bool,
+}
+
+impl TypeVarAllocator {
+    fn new() -> Self {
+        Self {
+            m: HashMap::new(),
+            cur_index: 0,
+            new_vars_allowed: true,
+        }
+    }
+
+    fn disallow_new_vars(&mut self) {
+        self.new_vars_allowed = false;
+    }
+
+    fn allocate_type_var(&mut self, name: &str) -> Result<usize, ErrorCause> {
+        match self.m.get(name) {
+            Some(index) => Ok(*index),
+            None => {
+                if self.new_vars_allowed {
+                    self.m.insert(name.to_string(), self.cur_index);
+                    self.cur_index += 1;
+                    Ok(self.cur_index - 1)
+                } else {
+                    Err(ErrorCause::UnknownIdentifier(name.to_string()))
+                }
+            }
+        }
+    }
+
+    fn as_type_vars(&self) -> TypeVars {
+        TypeVars::new(self.cur_index)
+    }
+}
+
+
+fn parse_function(pair: Pair<Rule>) -> Result<Function<MaybeTypedExpression>, Error> {
+    // pair: fn_decl
+    // type_spec? ~ fn_idents ~ fn_body
+    let pos = position_from_span(&pair.as_span());
+    let mut inner = pair.into_inner();
+    let mut tva = TypeVarAllocator::new();
+    let (type_spec, idents) = {
+        let p = inner.next().unwrap();
+        match p.as_rule() {
+            Rule::type_spec =>
+                (Some(build_type(p, &mut tva)?), inner.next().unwrap()),
+            Rule::fn_idents => (None, p),
+            _ => unreachable!()
+        }
+    };
+    tva.disallow_new_vars();
+    let fn_body = inner.next().unwrap();
+    let body_pos = position_from_span(&fn_body.as_span());
+    let (statements, tail) = parse_fn_body(fn_body, &mut tva)?;
+    let (name, bindings, ret_type) = build_bindings(idents, type_spec)?;
+    let lambda = Lambda::new(bindings, ret_type, statements, tail, body_pos);
+    Ok(Function::new(name, lambda, tva.as_type_vars(), pos))
+}
+
+fn build_bindings(fn_idents: Pair<Rule>, type_spec: Option<TypeExpression>) ->
+        Result<(String, Vec<Binding>, Option<TypeExpression>), Error> {
+    // fn_idents = { lc_ident+ }
+    let idents_pos = position_from_span(&fn_idents.as_span());
+    let mut idents_iter = fn_idents.into_inner().into_iter();
+    let name = idents_iter.next().unwrap().as_str().to_owned();
+    let mut strpos = idents_iter.map(|p| {
+        assert!(p.as_rule() == Rule::lc_ident);
+        let pos = position_from_span(&p.as_span());
+        let s = p.as_str().to_owned();
+        (s, pos)
+    });
+    match type_spec {
+        None => {
+            // No type spec => untyped bindings
+            Ok((name, strpos.map(|(s,p)| {
+                Binding::new_untyped(s,p)
+            }).collect(), None))
+        }
+        Some(ref t) => match t {
+            TypeExpression::Function(ts) => {
+                // Function type => create bindings
+                let mut bindings: Vec<Binding> = Vec::new();
+                for (i, (s, pos)) in strpos.enumerate() {
+                    match ts.get(i) {
+                        Some(t) =>
+                            bindings.push(Binding::new(s, TypeExpression::clone(t), pos)),
+                        None =>
+                            return Err(Error::new(ErrorCause::TooManyArguments, pos))
+                    }
+                }
+                match ts.get(bindings.len()..) {
+                    None =>
+                        Err(Error::new(ErrorCause::TooManyArguments, idents_pos)),
+                    Some(a) if a.len() == 1 =>
+                        Ok((name, bindings, Some(TypeExpression::clone(a.first().unwrap())))),
+                    Some(a) =>
+                        Ok((name, bindings, Some(TypeExpression::Function(a.to_vec()))))
+                }
+            }
+            _ => {
+                if strpos.next().is_none() {
+                    Ok((name, Vec::new(), type_spec))
+                } else {
+                    Err(Error::new(ErrorCause::IsAFunction, idents_pos))
+                }
+            }
+        }
+    }
+}
+
+fn parse_fn_body(body: Pair<Rule>, tva: &mut TypeVarAllocator) ->
+    Result<(Vec<Statement<MaybeTypedExpression>>, MaybeTypedExpression), Error> {
+    // body: fn_body
+    let inner = body.into_inner();
+    let mut tail: Option<MaybeTypedExpression> = None;
+    let mut statements: Vec<Statement<MaybeTypedExpression>> = Vec::new();
+    for pair in inner.into_iter() {
+        match pair.as_rule() {
+            Rule::statement => {
+                statements.push(parse_statement(pair, tva)?);
+            }
+            Rule::expression => {
+                tail = Some(parse_expression(pair)?);
+                break;
+            }
+            _ => unreachable!()
+        }
+    }
+    Ok((statements, tail.unwrap()))
+}
+
+fn parse_statement(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<Statement<MaybeTypedExpression>, Error> {
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
         Rule::expression => {
@@ -127,27 +189,27 @@ fn parse_statement(pair: Pair<Rule>) -> Result<Statement<UntypedExpression>, Err
                 let part2 = parts.next().unwrap();
                 match part2.as_rule() {
                     Rule::var_type_spec => {
-                        (build_type(part2)?, parse_expression(parts.next().unwrap())?)
+                        (Some(build_type(part2, tva)?), parse_expression(parts.next().unwrap())?)
                     }
                     Rule::expression => {
-                        (CuncType::Unknown, parse_expression(part2)?)
+                        (None, parse_expression(part2)?)
                     }
                     _ => unreachable!()
                 }
             };
-            let binding = Binding::new(name.to_string(), t, name_pos);
+            let binding = Binding::new_with_option(name.to_string(), t, name_pos);
             Ok(Statement::new_let(binding, expr))
         }
         _ => unreachable!()
     }
 }
 
-fn parse_expression(pair: Pair<Rule>) -> Result<UntypedExpression, Error> {
+fn parse_expression(pair: Pair<Rule>) -> Result<MaybeTypedExpression, Error> {
     let pos = position_from_span(&pair.as_span());
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
         Rule::application => {
-            let mut parsed_parts: Vec<UntypedExpression> = Vec::new();
+            let mut parsed_parts: Vec<MaybeTypedExpression> = Vec::new();
             for part in inner.into_inner() {
                 let part_position = position_from_span(&part.as_span());
                 let parsed_part = if let Rule::expression = part.as_rule() {
@@ -155,27 +217,32 @@ fn parse_expression(pair: Pair<Rule>) -> Result<UntypedExpression, Error> {
                 } else {
                     let parsed_part = match part.as_rule() {
                         Rule::lc_ident => {
-                            Expression::<UntypedExpression>::Variable(part.as_str().to_string())
+                            Expression::<MaybeTypedExpression>::Variable(part.as_str().to_string())
                         }
                         Rule::dec_constant => {
-                            Expression::<UntypedExpression>::IntConstant(
+                            Expression::<MaybeTypedExpression>::IntConstant(
                                 parse_dec_constant(part)?)
                         }
                         Rule::hex_constant => {
-                            Expression::<UntypedExpression>::IntConstant(
+                            Expression::<MaybeTypedExpression>::IntConstant(
                                 parse_hex_constant(part)?)
                         }
                         Rule::bin_constant => {
-                            Expression::<UntypedExpression>::IntConstant(
+                            Expression::<MaybeTypedExpression>::IntConstant(
                                 parse_bin_constant(part)?)
                         }
                         _ => unreachable!()
                     };
-                    UntypedExpression::new(parsed_part, part_position)
+                    MaybeTypedExpression::new(parsed_part, part_position)
                 };
                 parsed_parts.push(parsed_part);
             }
-            Ok(UntypedExpression::new(Expression::Application(parsed_parts), pos))
+            match parsed_parts.len() {
+                0 => unreachable!(),
+                1 => Ok(parsed_parts.pop().unwrap()),
+                _ =>
+                    Ok(MaybeTypedExpression::new(Expression::Application(parsed_parts), pos))
+            }
         }
         _ => unreachable!()
     }
@@ -195,21 +262,21 @@ fn parse_bin_constant(pair: Pair<Rule>) -> Result<u64, Error> {
     Ok(u64::from_str_radix(sn, 2).unwrap()) // TODO handle error
 }
 
-fn build_type(pair: Pair<Rule>) -> Result<CuncType, Error> {
+fn build_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpression, Error> {
     match pair.as_rule() {
-        Rule::var_type_spec => build_type(pair.into_inner().next().unwrap()),
+        Rule::var_type_spec => build_type(pair.into_inner().next().unwrap(), tva),
         Rule::type_fn => {
-            Ok(CuncType::Function(
+            Ok(TypeExpression::Function(
                 pair
                     .into_inner()
-                    .map(build_type)
+                    .map(|p| build_type(p, tva))
                     .collect::<Result<Vec<_>,_>>()?))
 
         }
         Rule::type_spec => {
             let inner = pair.into_inner().next().unwrap();
             if let Rule::type_fn = inner.as_rule() {
-                build_type(inner)
+                build_type(inner, tva)
             } else {
                 todo!()
             }
@@ -220,12 +287,15 @@ fn build_type(pair: Pair<Rule>) -> Result<CuncType, Error> {
                     ErrorCause::AtomicTypeParseError(e),
                     position_from_span(&pair.as_span())
                 ))?;
-            Ok(CuncType::Atomic(at))
+            Ok(TypeExpression::AtomicType(at))
         }
         Rule::lc_ident => {
-            todo!()
+            Ok(TypeExpression::Var(
+                tva.allocate_type_var(pair.as_str())
+                    .map_err(|c| Error::new(c, position_from_span(&pair.as_span())))?
+                    ))
         }
-        _ if pair.as_str() == "()" => Ok(CuncType::Atomic(AtomicType::Void)),
+        _ if pair.as_str() == "()" => Ok(TypeExpression::AtomicType(AtomicType::Void)),
         _ => {
             unreachable!()
         }

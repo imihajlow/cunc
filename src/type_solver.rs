@@ -1,4 +1,8 @@
+use crate::ast::MaybeTypedExpression;
 use crate::ast::Module;
+use crate::error::ErrorCause;
+use crate::graph::Graph;
+use crate::position::Position;
 use crate::type_context::TypeContext;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -18,6 +22,9 @@ struct Solver {
     rules: Vec<Vec<TypeExpression>>
 }
 
+#[derive(Debug)]
+struct SolveError(usize, ErrorCause);
+
 impl Solver {
     fn new() -> Self {
         Self {
@@ -32,8 +39,7 @@ impl Solver {
         self.rules[var_index].push(t);
     }
 
-    // TODO error handling
-    fn solve(mut self) -> Result<Solution, ()> {
+    fn solve(mut self) -> Result<Solution, SolveError> {
         assert!(self.rules.len() > 0);
         let mut to_process: Vec<usize> = (0..self.rules.len()).collect();
         while !to_process.is_empty() {
@@ -45,7 +51,7 @@ impl Solver {
                 let pivot_rule = TypeExpression::clone(current_rules.first().unwrap());
                 let mut new_rules: Vec<(usize, TypeExpression)> = Vec::new();
                 for rule in rest.into_iter() {
-                    new_rules.extend(match_rules(&pivot_rule, &rule)?);
+                    new_rules.extend(match_rules(&pivot_rule, &rule).map_err(|e| SolveError(current_var, e))?);
                 }
                 for rules in self.rules.iter_mut() {
                     for rule in rules.iter_mut() {
@@ -136,9 +142,8 @@ fn get_max_var_index(e: &TypeExpression) -> Option<usize> {
     }
 }
 
-// TODO error handling
 /// Match two type expressions and produce new type rules resulting from their equality.
-fn match_rules(pivot: &TypeExpression, other: &TypeExpression) -> Result<Vec<(usize, TypeExpression)>, ()> {
+fn match_rules(pivot: &TypeExpression, other: &TypeExpression) -> Result<Vec<(usize, TypeExpression)>, ErrorCause> {
     use TypeExpression::*;
     match (pivot, other) {
         (Var(n), t) => {
@@ -151,14 +156,14 @@ fn match_rules(pivot: &TypeExpression, other: &TypeExpression) -> Result<Vec<(us
             if a == b {
                 Ok(Vec::new())
             } else {
-                Err(()) // TODO
+                Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
             }
         }
         (AtomicType(_), Function(_)) => {
-            Err(()) // TODO
+            Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
         }
         (Function(_), AtomicType(_)) => {
-            Err(()) // TODO
+            Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
         }
         (Function(a), Function(b)) => {
             let common = if a.len() == b.len() {
@@ -233,7 +238,9 @@ impl Solution {
     }
 }
 
-pub fn deduce_types(m: Module<UntypedExpression>, context: &TypeContext) -> Module<TypedExpression> {
+pub fn deduce_types(m: Module<MaybeTypedExpression>, context: &TypeContext) -> Module<TypedExpression> {
+    // 1. Build dependency graph
+
     todo!();
 }
 

@@ -1,5 +1,106 @@
-use std::cmp;
+use std::hash::Hash;
 use std::collections::HashMap;
+use std::cmp;
+use std::fmt;
+use itertools::Itertools;
+
+pub struct ObjectGraph<T> where T: Eq + Hash + Clone {
+    g: Graph,
+    obj_to_node: HashMap<T, usize>,
+    node_to_obj: Vec<T>,
+}
+
+impl<T: Eq + Hash + Clone> ObjectGraph<T> {
+    pub fn new() -> Self {
+        Self {
+            g: Graph::new(),
+            obj_to_node: HashMap::new(),
+            node_to_obj: Vec::new(),
+        }
+    }
+
+    pub fn add_edge(&mut self, from: &T, to: &T) {
+        let n_from = self.add_or_get_node(from);
+        let n_to = self.add_or_get_node(to);
+        self.g.add_edge(n_from, n_to);
+    }
+
+    pub fn add_edge_unique(&mut self, from: &T, to: &T) {
+        let n_from = self.add_or_get_node(from);
+        let n_to = self.add_or_get_node(to);
+        self.g.add_edge_unique(n_from, n_to);
+    }
+
+    pub fn has_edge(&self, from: &T, to: &T) -> bool {
+        if !self.obj_to_node.contains_key(from) || !self.obj_to_node.contains_key(to) {
+            false
+        } else {
+            let n_from = self.obj_to_node[from];
+            let n_to = self.obj_to_node[to];
+            self.g.has_edge(n_from, n_to)
+        }
+    }
+
+
+    /// Find strongly connected components.
+    ///
+    /// Returns a graph of components where each node is a set of original type.
+    pub fn find_strongly_connected(&self) -> ObjectGraph<Vec<T>> {
+        let (scc, m) = self.g.find_strongly_connected();
+        let mut groups: Vec<Vec<T>> = vec![Vec::new(); scc.get_node_count()];
+        for (my_node, scc_node) in m.into_iter().enumerate() {
+            groups[scc_node].push(T::clone(&self.node_to_obj[my_node]));
+        }
+        let mut group_to_node: HashMap<Vec<T>, usize> = HashMap::new();
+        for (scc_node, scc_val) in groups.iter().enumerate() {
+            group_to_node.insert(Vec::clone(scc_val), scc_node);
+        }
+        ObjectGraph {
+            g: scc,
+            obj_to_node: group_to_node,
+            node_to_obj: groups
+        }
+    }
+
+    /// Find an ordering of the vertices,
+    /// such that if there's an edge from V to W,
+    /// then W comes before V in the ordering.
+    /// Returns None if there are loops in the graph.
+    pub fn inverse_topsort(self) -> Option<Vec<T>> {
+        self.g.inverse_topsort().map(|v| {
+            let mut r: Vec<T> = Vec::new();
+            for k in v.iter() {
+                r.push(T::clone(&self.node_to_obj[*k]));
+            }
+            r
+        })
+    }
+
+    fn add_or_get_node(&mut self, obj: &T) -> usize {
+        if self.obj_to_node.contains_key(obj) {
+            self.obj_to_node[obj]
+        } else {
+            let new_id = self.obj_to_node.len();
+            self.node_to_obj.push(T::clone(obj));
+            self.obj_to_node.insert(T::clone(obj), new_id);
+            new_id
+        }
+    }
+}
+
+impl<T: Eq + Hash + Clone + fmt::Display> fmt::Display for ObjectGraph<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        for (v, ws) in self.g.edges.iter().enumerate() {
+            write!(f, "{}: ", &self.node_to_obj[v])?;
+            for s in ws.iter().map(|w| format!("{}", &self.node_to_obj[*w])).intersperse(", ".to_string()) {
+                f.write_str(&s)?;
+            }
+            f.write_str("\n")?;
+        }
+        Ok(())
+    }
+}
+
 
 pub struct Graph {
     edges: Vec<Vec<usize>>,
