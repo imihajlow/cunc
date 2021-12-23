@@ -19,6 +19,11 @@ impl<T: Eq + Hash + Clone> ObjectGraph<T> {
         }
     }
 
+    pub fn add_node_unique(&mut self, obj: &T) {
+        let n = self.add_or_get_node(obj);
+        self.g.add_nodes_up_to(n);
+    }
+
     pub fn add_edge(&mut self, from: &T, to: &T) {
         let n_from = self.add_or_get_node(from);
         let n_to = self.add_or_get_node(to);
@@ -172,7 +177,7 @@ impl Graph {
                 if indices[*w].is_none() {
                     strongconnect(*w, edges, indices, lowlink, stack, onstack, index, result);
                     lowlink[v] = cmp::min(lowlink[v], lowlink[*w]);
-                } else {
+                } else if onstack[*w] {
                     // Successor w is in stack and hence in the current SCC
                     // If w is not on stack, then (v, w) is an edge pointing to an SCC already found and must be ignored
                     lowlink[v] = cmp::min(lowlink[v], indices[*w].unwrap());
@@ -302,6 +307,19 @@ mod tests {
         assert!(!scc.has_edge(m[8], m[8]));
         assert!(scc.has_edge(m[6], m[7]));
         assert!(scc.has_edge(m[6], m[8]));
+    }
+
+    #[test]
+    fn test_scc_2() {
+        let mut g = Graph::new();
+        g.add_edge(1, 2);
+        g.add_edge(3, 4);
+        g.add_edge(3, 2);
+        g.add_edge(4, 0);
+        g.add_edge(4, 3);
+        
+        let (scc, m) = g.find_strongly_connected();
+        assert_eq!(scc.get_node_count(), 4);
     }
 
     #[test]
