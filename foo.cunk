@@ -1,10 +1,16 @@
-[(U16 -> U16) -> U16 -> U16]
-call a b {
-  a b
+id z {
+  z
 }
 
-[U16 -> U16]
-id a {
-  a;
-  a
+foo {
+  id id
+}
+
+inc {
+  sum 1
+}
+
+[U8 -> U8]
+inc_u8 {
+  sum 1
 }

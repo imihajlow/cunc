@@ -55,9 +55,9 @@ impl Solver {
     pub fn solve(mut self) -> Result<Solution, SolveError> {
         assert!(self.rules.len() > 0);
         let mut to_process: Vec<usize> = (0..self.rules.len()).collect();
-        println!("Type solver\n========");
+        // println!("Type solver\n========");
         while !to_process.is_empty() {
-            println!("{}\n", &self);
+            // println!("{}\n", &self);
             let current_var = to_process.pop().unwrap();
             if !self.rules[current_var].is_empty() {
                 // If there are multiple rules for once variable,
@@ -109,9 +109,9 @@ impl Solver {
             }
         }
 
-        println!("Finally:\n===========\n{}", &self);
-        println!("max_var_index = {}", max_var_index);
-        println!("free vars: {:?}", &free_vars);
+        // println!("Finally:\n===========\n{}", &self);
+        // println!("max_var_index = {}", max_var_index);
+        // println!("free vars: {:?}", &free_vars);
         let mut free_var_mapping: HashMap<usize, usize> = HashMap::new();
         for (i, n) in free_vars.into_iter().enumerate() {
             free_var_mapping.insert(n, i);
@@ -128,11 +128,14 @@ impl Solver {
                 solution_rules.push(rule.rename_vars(&free_var_mapping));
             }
         }
-        for c in self.constraints.iter() {
-            c.check().map_err(|e| SolveError::ConstraintError(e))?;
+        let mut checked_constraints: Vec<TypeConstraint> = Vec::new();
+        for c in self.constraints.into_iter() {
+            if let Some(c) = c.check().map_err(|e| SolveError::ConstraintError(e))? {
+                checked_constraints.push(c);
+            }
         }
         let merged_constraints =
-            TypeConstraint::merge(self.constraints).map_err(|e| SolveError::ConstraintError(e))?;
+            TypeConstraint::merge(checked_constraints).map_err(|e| SolveError::ConstraintError(e))?;
         let renamed_constraints =
             merged_constraints.into_iter().map(|c| c.rename_vars(&free_var_mapping)).collect();
 

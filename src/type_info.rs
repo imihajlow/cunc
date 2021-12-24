@@ -124,6 +124,16 @@ impl TypeExpression {
                 v.iter_mut().for_each(|t| t.substitute(var_index, value))
         }
     }
+
+    /// Returns true if type expression does not contain any variables.
+    pub fn is_fixed(&self) -> bool {
+        use TypeExpression::*;
+        match self {
+            Atomic(_) => true,
+            Var(_) => false,
+            Function(v) => v.iter().all(|e| e.is_fixed())
+        }
+    }
 }
 
 impl IntType {

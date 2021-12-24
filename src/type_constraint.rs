@@ -32,11 +32,15 @@ impl TypeConstraint {
         }
     }
 
-    pub fn check(&self) -> Result<(), Error> {
+    pub fn check(self) -> Result<Option<Self>, Error> {
         if self.v.check(&self.t) {
-            Ok(())
+            if self.t.is_fixed() {
+                Ok(None)
+            } else {
+                Ok(Some(self))
+            }
         } else {
-            Err(Error::new(ErrorCause::TypeConstraintMismatch(TypeConstraint::clone(self)),
+            Err(Error::new(ErrorCause::TypeConstraintMismatch(TypeConstraint::clone(&self)),
                 Position::clone(&self.p)))
         }
     }

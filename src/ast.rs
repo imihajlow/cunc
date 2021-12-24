@@ -119,7 +119,7 @@ impl<Type> Module<Type> {
 
 /// Enum used in type context.
 #[derive(Debug, Clone)]
-enum TypeAssignment {
+pub enum TypeAssignment {
     ToplevelFunction(TypeVars, TypeExpression),
     LocalName(usize),
 }
@@ -134,13 +134,13 @@ impl TypeAssignment {
 }
 
 impl<> Module<OptionalType> {
-    pub fn deduce_types(&self) -> Result<Module<FixedType>, Error> {
+    pub fn deduce_types(&self, parent_context: &TypeContext<TypeAssignment>) -> Result<Module<FixedType>, Error> {
         let function_by_name: HashMap<String, &Function<_>> =
             HashMap::from_iter(self.functions.iter().map(|f| (f.name.to_string(), f)));
         let dep_graph = self.build_dependency_graph();
         let toporder = dep_graph.find_strongly_connected().inverse_topsort().unwrap();
         let mut result: Module<FixedType> = Module::new();
-        let mut context: TypeContext<TypeAssignment> = TypeContext::new();
+        let mut context: TypeContext<TypeAssignment> = parent_context.push();
         for group in toporder.into_iter() {
             let mut local_context = context.push();
             let mut allocator = TypeVarAllocator::new();
@@ -162,19 +162,19 @@ impl<> Module<OptionalType> {
                 let (lambda, overall_type) =
                     function.body.assign_type_vars(&function_context, &mut solver, &mut allocator)?;
                 solver.add_rule(index, overall_type);
-                println!("{} {}\n", &fname, &lambda);
+                // println!("{} {}\n", &fname, &lambda);
                 var_annotated_bodies.push((fname.to_owned(), lambda));
                 allocator.leave_function();
             }
-            println!("{}", &solver);
+            // println!("{}", &solver);
             let solution = solver.solve().map_err(|e| e.as_error(&allocator))?;
-            println!("\nSolution:\n{}", &solution);
+            // println!("\nSolution:\n{}", &solution);
             // Store functions in module and update context with their types
             for (name, body) in var_annotated_bodies.into_iter() {
                 let deduced_body = body.translate_types(&solution);
                 let new_type_vars = TypeVars::new(solution.get_free_vars_count(),
                     solution.clone_type_constraints());
-                println!("\n{} {}", &name, &deduced_body);
+                // println!("\n{} {}", &name, &deduced_body);
                 let old_function = function_by_name[&name];
                 context.set(&name,
                     &TypeAssignment::ToplevelFunction(

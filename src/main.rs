@@ -10,12 +10,23 @@ mod graph;
 mod name_context;
 mod type_var_allocator;
 mod type_constraint;
-use crate::parse::parse;
+use crate::type_info::TypeExpression;
+use crate::type_info::TypeVars;
+use crate::{parse::parse, name_context::TypeContext, ast::TypeAssignment};
+use crate::position::Position;
 use argparse::{ArgumentParser, Store};
+use type_constraint::TypeConstraint;
 #[macro_use]
 extern crate pest_derive;
 // use crate::parse::parse;
 
+fn create_default_context() -> TypeContext<'static, TypeAssignment> {
+    let mut context: TypeContext<TypeAssignment> = TypeContext::new();
+    context.set("sum", &TypeAssignment::ToplevelFunction(
+        TypeVars::new(1, vec![TypeConstraint::new_num(&TypeExpression::Var(0), &Position::Builtin)]),
+        TypeExpression::Function(vec![TypeExpression::Var(0), TypeExpression::Var(0), TypeExpression::Var(0)]))).unwrap();
+    context
+}
 
 fn main() {
     let mut fname = String::new();
@@ -27,7 +38,8 @@ fn main() {
     }
     let m = parse(&fname).unwrap();
     println!("{}", &m);
-    match m.deduce_types() {
+    let context = create_default_context();
+    match m.deduce_types(&context) {
         Ok(deduced) => println!("+++++++++++++++++++\n\n{}", &deduced),
         Err(e) => eprintln!("{}", &e)
     }

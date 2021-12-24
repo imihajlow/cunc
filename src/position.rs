@@ -4,6 +4,7 @@ use pest::error::LineColLocation;
 
 #[derive(Debug, Clone)]
 pub enum Position {
+    Builtin,
     Pos(usize, usize),
     Span((usize, usize), (usize, usize))
 }
@@ -22,6 +23,7 @@ pub fn position_from_linecol(p: LineColLocation) -> Position {
 impl fmt::Display for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Position::Builtin => write!(f, "<builtin>"),
             Position::Pos(r,c) => write!(f, "{}:{}", r, c),
             Position::Span((r1,c1),(r2,c2)) if r1 == r2 => write!(f, "{}:{}-{}", r1, c1, c2),
             Position::Span((r1,c1),(r2,c2)) => write!(f, "{}:{}-{}:{}", r1, c1, r2, c2),
