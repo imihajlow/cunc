@@ -26,6 +26,8 @@ fn main() {
     }
     let m = parse(&fname).unwrap();
     println!("{}", &m);
-    let deduced = m.deduce_types().unwrap();
-    println!("+++++++++++++++++++\n\n{}", &deduced);
+    match m.deduce_types() {
+        Ok(deduced) => println!("+++++++++++++++++++\n\n{}", &deduced),
+        Err(e) => eprintln!("{}", &e)
+    }
 }

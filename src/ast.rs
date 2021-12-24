@@ -17,6 +17,13 @@ use crate::position::Position;
 use crate::type_info::TypeExpression;
 use crate::type_info::TypeVars;
 
+/*
+    Type inference system takes Module<OptionalType>,
+    assigns type variables to every part of every expression producing VariableType-based objects,
+    and after deducing variable values with type_solver::Solver substitutes variables with fixed types,
+    producing Module<FixedType>.
+ */
+
 /// Type which can be specified or not.
 #[derive(Debug, Clone)]
 pub struct OptionalType(pub Option<TypeExpression>);
@@ -138,10 +145,10 @@ impl<> Module<OptionalType> {
             let mut local_context = context.push();
             let mut allocator = TypeVarAllocator::new();
             let mut solver = Solver::new();
-            // First just assign indexes to functions
+            // First just assign indices to functions
             for fname in group.iter() {
-                let index = allocator.allocate();
                 let pos = &function_by_name[fname].p;
+                let index = allocator.allocate(pos);
                 local_context.set(fname, &TypeAssignment::LocalName(index))
                     .map_err(|c| Error::new(c, Position::clone(pos)))?;
             }
@@ -151,7 +158,7 @@ impl<> Module<OptionalType> {
                 let function = function_by_name[fname];
                 let index = local_context.get(fname).unwrap().unwrap_local_name();
                 let function_context = local_context.push();
-                allocator.enter_function(function.type_vars.get_vars_count());
+                allocator.enter_function(function.type_vars.get_vars_count(), &function.p);
                 let (lambda, overall_type) =
                     function.body.assign_type_vars(&function_context, &mut solver, &mut allocator)?;
                 solver.add_rule(index, overall_type);
@@ -160,7 +167,7 @@ impl<> Module<OptionalType> {
                 allocator.leave_function();
             }
             println!("{}", &solver);
-            let solution = solver.solve().unwrap(); // TODO
+            let solution = solver.solve().map_err(|e| e.as_error(&allocator))?;
             println!("\n{}", &solution);
             // Store functions in module and update context with their types
             for (name, body) in var_annotated_bodies.into_iter() {
@@ -169,7 +176,9 @@ impl<> Module<OptionalType> {
                 println!("\n{} {}", &name, &deduced_body);
                 let old_function = function_by_name[&name];
                 context.set(&name,
-                    &TypeAssignment::ToplevelFunction(TypeVars::clone(&new_type_vars), deduced_body.get_overall_type()))
+                    &TypeAssignment::ToplevelFunction(
+                        TypeVars::clone(&new_type_vars),
+                        deduced_body.get_overall_type()))
                     .map_err(|c| Error::new(c, Position::clone(&old_function.p)))?;
                 let new_function: Function<FixedType> =
                     Function::new(name, deduced_body, new_type_vars, Position::clone(&old_function.p));
@@ -236,7 +245,7 @@ impl<> Expression<OptionalType> {
     fn assign_type_vars(&self, context: &mut TypeContext<TypeAssignment>, solver: &mut Solver, allocator: &mut TypeVarAllocator) 
             -> Result<Expression<VariableType>, Error> {
         use ExpressionVariant::*;
-        let my_var_index = allocator.allocate();
+        let my_var_index = allocator.allocate(&self.p);
         let my_position = Position::clone(&self.p);
         if let Some(t) = &self.t.0 {
             solver.add_rule(my_var_index, t.remap_vars(allocator));
@@ -268,7 +277,7 @@ impl<> Expression<OptionalType> {
                                 solver.add_rule(my_var_index, TypeExpression::Var(*var_index)),
                             TypeAssignment::ToplevelFunction(tv, te) => {
                                 // Generic function. Remap generic variables.
-                                allocator.enter_function(tv.get_vars_count());
+                                allocator.enter_function(tv.get_vars_count(), &self.p);
                                 solver.add_rule(my_var_index, te.remap_vars(allocator));
                                 // TODO type constraints
                                 allocator.leave_function();
@@ -296,7 +305,7 @@ impl<> Lambda<OptionalType> {
         let mut param_indices: Vec<usize> = Vec::new();
         let mut new_param_bindings: Vec<Binding<VariableType>> = Vec::new();
         for p in self.params.iter() {
-            let index = allocator.allocate();
+            let index = allocator.allocate(&p.p);
             param_indices.push(index);
             local_context.set(&p.name, &TypeAssignment::LocalName(index))
                 .map_err(|c| Error::new(c, Position::clone(&p.p)))?;
@@ -306,7 +315,7 @@ impl<> Lambda<OptionalType> {
             new_param_bindings.push(
                 Binding::new(p.name.to_owned(), VariableType(index), Position::clone(&p.p)));
         }
-        let return_type_index = allocator.allocate();
+        let return_type_index = allocator.allocate(&self.p);
         if let Some(t) = &self.return_type.0 {
             solver.add_rule(return_type_index, t.remap_vars(allocator));
         }
@@ -337,7 +346,7 @@ impl<> Statement<OptionalType> {
             }
             Let(binding, e) => {
                 let new_expr = e.assign_type_vars(context, solver, allocator)?;
-                let new_var_index = allocator.allocate();
+                let new_var_index = allocator.allocate(&binding.p);
                 solver.add_rule(new_var_index, TypeExpression::Var(new_expr.t.0));
                 if let Some(t) = &binding.t.0 {
                     solver.add_rule(new_var_index, t.remap_vars(allocator));

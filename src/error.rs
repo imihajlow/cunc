@@ -1,6 +1,7 @@
 use crate::type_info::AtomicTypeParseError;
 use crate::type_info::TypeExpression;
 use crate::position::Position;
+use std::fmt;
 
 #[derive(Debug)]
 pub struct Error {
@@ -13,7 +14,6 @@ pub enum ErrorCause {
     SyntaxError(String),
     UnknownIdentifier(String),
     Redefinition(String),
-    NotAFunction,
     IsAFunction,
     TooManyArguments,
     TypesMismatch(TypeExpression, TypeExpression),
@@ -26,5 +26,27 @@ impl Error {
             cause,
             p: position
         }
+    }
+}
+
+impl fmt::Display for ErrorCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use ErrorCause::*;
+        match self {
+            SyntaxError(s) => write!(f, "syntax error: {}", s),
+            UnknownIdentifier(s) => write!(f, "unknown identifier `{}'", s),
+            Redefinition(s) => write!(f, "`{}' is redefined", s),
+            IsAFunction => f.write_str("a non-functional type declaration for a function"),
+            TooManyArguments => f.write_str("too many arguments"),
+            TypesMismatch(t1, t2) => write!(f, "cannot match `{}' against `{}'", t1, t2),
+            AtomicTypeParseError(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Error at {}: {}", self.p, self.cause)
     }
 }

@@ -1,4 +1,7 @@
+use crate::position::Position;
+use crate::error::Error;
 use crate::error::ErrorCause;
+use crate::type_var_allocator::TypeVarAllocator;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
@@ -12,6 +15,12 @@ pub struct Solver {
 
 #[derive(Debug)]
 pub struct SolveError(usize, ErrorCause);
+
+impl SolveError {
+    pub fn as_error(self, allocator: &TypeVarAllocator) -> Error {
+        Error::new(self.1, Position::clone(allocator.get_position(self.0)))
+    }
+}
 
 impl Solver {
     pub fn new() -> Self {

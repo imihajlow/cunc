@@ -1,5 +1,6 @@
 use crate::type_var_allocator::TypeVarAllocator;
 use crate::util::var_from_number;
+use std::io::Empty;
 use std::{str::FromStr};
 
 use std::fmt;
@@ -189,12 +190,23 @@ impl fmt::Display for AtomicType {
 
 impl fmt::Display for IntType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}", if self.signed { "s" } else { "u" }, self.bits)
+        write!(f, "{}{}", if self.signed { "S" } else { "U" }, self.bits)
     }
 }
 
 impl fmt::Display for IntBits {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", (*self as u32) * 8)
+    }
+}
+
+impl fmt::Display for AtomicTypeParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use AtomicTypeParseError::*;
+        match self {
+            Empty => f.write_str("empty type"),
+            WrongIntSize => f.write_str("wrong integer width"),
+            Unknown => f.write_str("unknown type"),
+        }
     }
 }

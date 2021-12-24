@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::position::position_from_span;
+use crate::position::{position_from_span, position_from_linecol};
 use crate::type_info::TypeVars;
 use pest::iterators::Pair;
 use crate::error::Error;
@@ -17,7 +17,7 @@ pub fn parse(fname: &str) -> Result<Module<OptionalType>, Error> {
     let root = match CuncParser::parse(Rule::main, &code) {
         Ok(ast) => ast,
         Err(e) => {
-            return Err(Error::new(ErrorCause::SyntaxError(e.to_string()), e.line_col));
+            return Err(Error::new(ErrorCause::SyntaxError(e.to_string()), position_from_linecol(e.line_col)));
         }
     };
     // println!("{}", &root);
