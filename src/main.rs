@@ -1,7 +1,6 @@
 mod ast;
 mod type_info;
 mod type_solver;
-mod type_context;
 mod generic_context;
 mod error;
 mod position;
@@ -9,6 +8,7 @@ mod parse;
 mod util;
 mod graph;
 mod name_context;
+mod type_var_allocator;
 use crate::parse::parse;
 use argparse::{ArgumentParser, Store};
 #[macro_use]
@@ -24,5 +24,8 @@ fn main() {
         ap.refer(&mut fname).add_argument("file", Store, "Program file");
         ap.parse_args_or_exit();
     }
-    println!("{}", parse(&fname).unwrap());
+    let m = parse(&fname).unwrap();
+    println!("{}", &m);
+    let deduced = m.deduce_types().unwrap();
+    println!("+++++++++++++++++++\n\n{}", &deduced);
 }

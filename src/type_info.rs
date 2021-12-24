@@ -1,3 +1,4 @@
+use crate::type_var_allocator::TypeVarAllocator;
 use crate::util::var_from_number;
 use std::{str::FromStr};
 
@@ -65,6 +66,10 @@ impl TypeVars {
     pub fn is_empty(&self) -> bool {
         self.range == 0
     }
+
+    pub fn get_vars_count(&self) -> usize {
+        self.range
+    }
 }
 
 impl TypeExpression {
@@ -87,6 +92,15 @@ impl TypeExpression {
             _ => {
                 Err(ErrorCause::TooManyArguments)
             }
+        }
+    }
+
+    pub fn remap_vars(&self, allocator: &TypeVarAllocator) -> TypeExpression {
+        use TypeExpression::*;
+        match self {
+            AtomicType(_) => TypeExpression::clone(self),
+            Var(n) => Var(allocator.map_existing(*n)),
+            Function(v) => Function(v.iter().map(|t| t.remap_vars(allocator)).collect())
         }
     }
 }
@@ -125,18 +139,6 @@ impl FromStr for AtomicType {
         }
     }
 }
-
-// pub fn collect_type<'a, I>(iter: &'a mut I) -> Option<CuncType>
-// where I: Iterator<Item = &'a CuncType> {
-//     let types: Vec<_> = iter.collect();
-//     if types.len() == 0 {
-//         None
-//     } else if types.len() == 1 {
-//         Some(CuncType::clone(types[0]))
-//     } else {
-//         Some(CuncType::Function(types.into_iter().map(CuncType::clone).collect()))
-//     }
-// }
 
 impl fmt::Display for TypeInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -12,7 +12,7 @@ use pest::Parser;
 #[grammar = "cunc.pest"]
 pub struct CuncParser;
 
-pub fn parse(fname: &str) -> Result<Module<MaybeTypedExpression>, Error> {
+pub fn parse(fname: &str) -> Result<Module<OptionalType>, Error> {
     let code = std::fs::read_to_string(&fname).unwrap();
     let root = match CuncParser::parse(Rule::main, &code) {
         Ok(ast) => ast,
@@ -22,7 +22,7 @@ pub fn parse(fname: &str) -> Result<Module<MaybeTypedExpression>, Error> {
     };
     // println!("{}", &root);
 
-    let mut result: Module<MaybeTypedExpression> = Module::new();
+    let mut result: Module<OptionalType> = Module::new();
     for node in root.into_iter() {
         match node.as_rule() {
             Rule::fn_decl => {
@@ -77,7 +77,7 @@ impl TypeVarAllocator {
 }
 
 
-fn parse_function(pair: Pair<Rule>) -> Result<Function<MaybeTypedExpression>, Error> {
+fn parse_function(pair: Pair<Rule>) -> Result<Function<OptionalType>, Error> {
     // pair: fn_decl
     // type_spec? ~ fn_idents ~ fn_body
     let pos = position_from_span(&pair.as_span());
@@ -97,12 +97,12 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function<MaybeTypedExpression>, Er
     let body_pos = position_from_span(&fn_body.as_span());
     let (statements, tail) = parse_fn_body(fn_body, &mut tva)?;
     let (name, bindings, ret_type) = build_bindings(idents, type_spec)?;
-    let lambda = Lambda::new(bindings, ret_type, statements, tail, body_pos);
+    let lambda = Lambda::new(bindings, OptionalType(ret_type), statements, tail, body_pos);
     Ok(Function::new(name, lambda, tva.as_type_vars(), pos))
 }
 
 fn build_bindings(fn_idents: Pair<Rule>, type_spec: Option<TypeExpression>) ->
-        Result<(String, Vec<Binding>, Option<TypeExpression>), Error> {
+        Result<(String, Vec<Binding<OptionalType>>, Option<TypeExpression>), Error> {
     // fn_idents = { lc_ident+ }
     let idents_pos = position_from_span(&fn_idents.as_span());
     let mut idents_iter = fn_idents.into_inner().into_iter();
@@ -117,17 +117,17 @@ fn build_bindings(fn_idents: Pair<Rule>, type_spec: Option<TypeExpression>) ->
         None => {
             // No type spec => untyped bindings
             Ok((name, strpos.map(|(s,p)| {
-                Binding::new_untyped(s,p)
+                Binding::new(s, OptionalType(None), p)
             }).collect(), None))
         }
         Some(ref t) => match t {
             TypeExpression::Function(ts) => {
                 // Function type => create bindings
-                let mut bindings: Vec<Binding> = Vec::new();
+                let mut bindings: Vec<Binding<OptionalType>> = Vec::new();
                 for (i, (s, pos)) in strpos.enumerate() {
                     match ts.get(i) {
                         Some(t) =>
-                            bindings.push(Binding::new(s, TypeExpression::clone(t), pos)),
+                            bindings.push(Binding::new(s, OptionalType(Some(TypeExpression::clone(t))), pos)),
                         None =>
                             return Err(Error::new(ErrorCause::TooManyArguments, pos))
                     }
@@ -153,11 +153,11 @@ fn build_bindings(fn_idents: Pair<Rule>, type_spec: Option<TypeExpression>) ->
 }
 
 fn parse_fn_body(body: Pair<Rule>, tva: &mut TypeVarAllocator) ->
-    Result<(Vec<Statement<MaybeTypedExpression>>, MaybeTypedExpression), Error> {
+    Result<(Vec<Statement<OptionalType>>, Expression<OptionalType>), Error> {
     // body: fn_body
     let inner = body.into_inner();
-    let mut tail: Option<MaybeTypedExpression> = None;
-    let mut statements: Vec<Statement<MaybeTypedExpression>> = Vec::new();
+    let mut tail: Option<Expression<OptionalType>> = None;
+    let mut statements: Vec<Statement<OptionalType>> = Vec::new();
     for pair in inner.into_iter() {
         match pair.as_rule() {
             Rule::statement => {
@@ -173,7 +173,8 @@ fn parse_fn_body(body: Pair<Rule>, tva: &mut TypeVarAllocator) ->
     Ok((statements, tail.unwrap()))
 }
 
-fn parse_statement(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<Statement<MaybeTypedExpression>, Error> {
+fn parse_statement(pair: Pair<Rule>, tva: &mut TypeVarAllocator)
+        -> Result<Statement<OptionalType>, Error> {
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
         Rule::expression => {
@@ -197,43 +198,43 @@ fn parse_statement(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<State
                     _ => unreachable!()
                 }
             };
-            let binding = Binding::new_with_option(name.to_string(), t, name_pos);
+            let binding = Binding::new(name.to_string(), OptionalType(t), name_pos);
             Ok(Statement::new_let(binding, expr))
         }
         _ => unreachable!()
     }
 }
 
-fn parse_expression(pair: Pair<Rule>) -> Result<MaybeTypedExpression, Error> {
+fn parse_expression(pair: Pair<Rule>) -> Result<Expression<OptionalType>, Error> {
     let pos = position_from_span(&pair.as_span());
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
         Rule::application => {
-            let mut parsed_parts: Vec<MaybeTypedExpression> = Vec::new();
+            let mut parsed_parts: Vec<Expression<OptionalType>> = Vec::new();
             for part in inner.into_inner() {
                 let part_position = position_from_span(&part.as_span());
-                let parsed_part = if let Rule::expression = part.as_rule() {
+                let parsed_part: Expression<OptionalType> = if let Rule::expression = part.as_rule() {
                     parse_expression(part)?
                 } else {
                     let parsed_part = match part.as_rule() {
                         Rule::lc_ident => {
-                            Expression::<MaybeTypedExpression>::Variable(part.as_str().to_string())
+                            ExpressionVariant::Variable(part.as_str().to_string())
                         }
                         Rule::dec_constant => {
-                            Expression::<MaybeTypedExpression>::IntConstant(
+                            ExpressionVariant::IntConstant(
                                 parse_dec_constant(part)?)
                         }
                         Rule::hex_constant => {
-                            Expression::<MaybeTypedExpression>::IntConstant(
+                            ExpressionVariant::IntConstant(
                                 parse_hex_constant(part)?)
                         }
                         Rule::bin_constant => {
-                            Expression::<MaybeTypedExpression>::IntConstant(
+                            ExpressionVariant::IntConstant(
                                 parse_bin_constant(part)?)
                         }
                         _ => unreachable!()
                     };
-                    MaybeTypedExpression::new(parsed_part, part_position)
+                    Expression::<OptionalType>::new(parsed_part, part_position, None)
                 };
                 parsed_parts.push(parsed_part);
             }
@@ -241,7 +242,8 @@ fn parse_expression(pair: Pair<Rule>) -> Result<MaybeTypedExpression, Error> {
                 0 => unreachable!(),
                 1 => Ok(parsed_parts.pop().unwrap()),
                 _ =>
-                    Ok(MaybeTypedExpression::new(Expression::Application(parsed_parts), pos))
+                    Ok(Expression::<OptionalType>::new(
+                        ExpressionVariant::Application(parsed_parts), pos, None))
             }
         }
         _ => unreachable!()

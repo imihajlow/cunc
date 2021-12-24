@@ -1,47 +1,36 @@
-use crate::ast::MaybeTypedExpression;
-use crate::ast::Module;
 use crate::error::ErrorCause;
-use crate::graph::Graph;
-use crate::position::Position;
-use crate::type_context::TypeContext;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 use std::cmp;
-
-
-use crate::ast::TypedExpression;
-
 use crate::type_info::TypeExpression;
-
 use crate::util::var_from_number;
-use crate::{ast::{UntypedExpression}};
 
-
-struct Solver {
+pub struct Solver {
     rules: Vec<Vec<TypeExpression>>
 }
 
 #[derive(Debug)]
-struct SolveError(usize, ErrorCause);
+pub struct SolveError(usize, ErrorCause);
 
 impl Solver {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             rules: Vec::new()
         }
     }
 
-    fn add_rule(&mut self, var_index: usize, t: TypeExpression) {
+    pub fn add_rule(&mut self, var_index: usize, t: TypeExpression) {
         if self.rules.len() <= var_index {
             self.rules.resize(var_index + 1, Vec::new());
         }
         self.rules[var_index].push(t);
     }
 
-    fn solve(mut self) -> Result<Solution, SolveError> {
+    pub fn solve(mut self) -> Result<Solution, SolveError> {
         assert!(self.rules.len() > 0);
         let mut to_process: Vec<usize> = (0..self.rules.len()).collect();
+        println!("Type solver\n========");
         while !to_process.is_empty() {
             println!("{}\n", &self);
             let current_var = to_process.pop().unwrap();
@@ -211,7 +200,7 @@ fn rename_vars(mapping: &HashMap<usize, usize>, value: TypeExpression) -> TypeEx
     }
 }
 
-struct Solution {
+pub struct Solution {
     rules: Vec<TypeExpression>,
     free_vars_count: usize,
 }
@@ -224,7 +213,7 @@ impl Solution {
         }
     }
 
-    fn translate_type(&self, t: TypeExpression) -> TypeExpression {
+    pub fn translate_type(&self, t: TypeExpression) -> TypeExpression {
         use TypeExpression::*;
         match t {
             AtomicType(_) => t,
@@ -233,15 +222,22 @@ impl Solution {
         }
     }
 
-    fn get_free_vars_count(&self) -> usize {
+    pub fn translate_var_index(&self, index: usize) -> TypeExpression {
+        TypeExpression::clone(&self.rules[index])
+    }
+
+    pub fn get_free_vars_count(&self) -> usize {
         self.free_vars_count
     }
 }
 
-pub fn deduce_types(m: Module<MaybeTypedExpression>, context: &TypeContext) -> Module<TypedExpression> {
-    // 1. Build dependency graph
-
-    todo!();
+impl fmt::Display for Solution {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (v, rule) in self.rules.iter().enumerate() {
+            writeln!(f, "{} = {}", var_from_number(v), rule)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
