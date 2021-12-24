@@ -1,7 +1,7 @@
 
 use crate::error::ErrorCause;
+use crate::type_constraint::TypeConstraint;
 use crate::type_solver::Solution;
-use crate::type_solver::SolveError;
 use crate::util::var_from_number;
 use std::collections::HashMap;
 use crate::error::Error;
@@ -168,11 +168,12 @@ impl<> Module<OptionalType> {
             }
             println!("{}", &solver);
             let solution = solver.solve().map_err(|e| e.as_error(&allocator))?;
-            println!("\n{}", &solution);
+            println!("\nSolution:\n{}", &solution);
             // Store functions in module and update context with their types
             for (name, body) in var_annotated_bodies.into_iter() {
                 let deduced_body = body.translate_types(&solution);
-                let new_type_vars = TypeVars::new(solution.get_free_vars_count());
+                let new_type_vars = TypeVars::new(solution.get_free_vars_count(),
+                    solution.clone_type_constraints());
                 println!("\n{} {}", &name, &deduced_body);
                 let old_function = function_by_name[&name];
                 context.set(&name,
@@ -265,7 +266,7 @@ impl<> Expression<OptionalType> {
                 Ok(Expression::<VariableType>::new(Application(annotated_parts), my_position, my_var_index))
             }
             IntConstant(x) => {
-                // TODO add type constraint
+                solver.add_constraint(TypeConstraint::new_num(&TypeExpression::Var(my_var_index), &my_position));
                 Ok(Expression::<VariableType>::new(IntConstant(*x), my_position, my_var_index))
             }
             Variable(name) => {
@@ -595,6 +596,7 @@ impl<Type: PrefixFormatter> fmt::Display for Statement<Type> {
 
 impl<Type: PrefixFormatter> fmt::Display for Function<Type> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.type_vars)?;
         write!(f, "def {} = {}", self.name, self.body)
     }
 }

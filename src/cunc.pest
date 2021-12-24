@@ -16,15 +16,15 @@ fn_body = {
 
 type_spec = {
     ("[" ~ type_fn ~ "]") |
-    ("[" ~ type_vars_decl ~ "=>" ~ type_fn ~ "]")
+    ("[" ~ constraints_decl ~ "=>" ~ type_fn ~ "]")
 }
 
-type_vars_decl = {
-    type_var_decl ~ ("," ~ type_var_decl)*
+constraints_decl = {
+    constraint_decl ~ ("," ~ constraint_decl)*
 }
 
-type_var_decl = {
-    uc_ident ~ lc_ident
+constraint_decl = {
+    uc_ident ~ lc_ident+
 }
 
 type_fn = {

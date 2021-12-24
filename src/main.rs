@@ -9,6 +9,7 @@ mod util;
 mod graph;
 mod name_context;
 mod type_var_allocator;
+mod type_constraint;
 use crate::parse::parse;
 use argparse::{ArgumentParser, Store};
 #[macro_use]

@@ -1,6 +1,7 @@
 use crate::position::Position;
 use crate::error::Error;
 use crate::error::ErrorCause;
+use crate::type_constraint::TypeConstraint;
 use crate::type_var_allocator::TypeVarAllocator;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -8,24 +9,35 @@ use std::fmt;
 use std::cmp;
 use crate::type_info::TypeExpression;
 use crate::util::var_from_number;
+use itertools::Itertools;
 
 pub struct Solver {
-    rules: Vec<Vec<TypeExpression>>
+    rules: Vec<Vec<TypeExpression>>,
+    constraints: Vec<TypeConstraint>
 }
 
 #[derive(Debug)]
-pub struct SolveError(usize, ErrorCause);
+pub enum SolveError {
+    RuleError(usize, ErrorCause),
+    ConstraintError(Error),
+}
 
 impl SolveError {
     pub fn as_error(self, allocator: &TypeVarAllocator) -> Error {
-        Error::new(self.1, Position::clone(allocator.get_position(self.0)))
+        match self {
+            Self::RuleError(n, c) =>
+                Error::new(c, Position::clone(allocator.get_position(n))),
+            Self::ConstraintError(e) =>
+                e
+        }
     }
 }
 
 impl Solver {
     pub fn new() -> Self {
         Self {
-            rules: Vec::new()
+            rules: Vec::new(),
+            constraints: Vec::new(),
         }
     }
 
@@ -36,6 +48,10 @@ impl Solver {
         self.rules[var_index].push(t);
     }
 
+    pub fn add_constraint(&mut self, c: TypeConstraint) {
+        self.constraints.push(c);
+    }
+
     pub fn solve(mut self) -> Result<Solution, SolveError> {
         assert!(self.rules.len() > 0);
         let mut to_process: Vec<usize> = (0..self.rules.len()).collect();
@@ -44,18 +60,29 @@ impl Solver {
             println!("{}\n", &self);
             let current_var = to_process.pop().unwrap();
             if !self.rules[current_var].is_empty() {
+                // If there are multiple rules for once variable,
+                // match them together to produce new rules,
+                // removing all original rules but one.
                 let current_rules = &mut self.rules[current_var];
                 let rest = current_rules.split_off(1);
                 let pivot_rule = TypeExpression::clone(current_rules.first().unwrap());
                 let mut new_rules: Vec<(usize, TypeExpression)> = Vec::new();
                 for rule in rest.into_iter() {
-                    new_rules.extend(match_rules(&pivot_rule, &rule).map_err(|e| SolveError(current_var, e))?);
+                    new_rules.extend(match_rules(&pivot_rule, &rule).map_err(|e| SolveError::RuleError(current_var, e))?);
                 }
+
+                // Substitute all occurences of the variable with its only rule
                 for rules in self.rules.iter_mut() {
                     for rule in rules.iter_mut() {
-                        substitute(current_var, &pivot_rule, rule)
+                        rule.substitute(current_var, &pivot_rule)
                     }
                 }
+                for c in self.constraints.iter_mut() {
+                    c.substitute(current_var, &pivot_rule);
+                }
+
+
+                // If there were new rules, mark corresponding variables for processing
                 let mut affected_vars: HashSet<usize> = HashSet::new();
                 for (var, t) in new_rules.into_iter() {
                     affected_vars.insert(var);
@@ -98,21 +125,36 @@ impl Solver {
             } else {
                 assert!(self.rules[i].len() == 1);
                 let rule = self.rules[i].pop().unwrap();
-                solution_rules.push(rename_vars(&free_var_mapping, rule));
+                solution_rules.push(rule.rename_vars(&free_var_mapping));
             }
         }
+        for c in self.constraints.iter() {
+            c.check().map_err(|e| SolveError::ConstraintError(e))?;
+        }
+        let merged_constraints =
+            TypeConstraint::merge(self.constraints).map_err(|e| SolveError::ConstraintError(e))?;
+        let renamed_constraints =
+            merged_constraints.into_iter().map(|c| c.rename_vars(&free_var_mapping)).collect();
 
-        Ok(Solution::new(solution_rules, free_var_mapping.len()))
+
+        Ok(Solution::new(solution_rules, renamed_constraints, free_var_mapping.len()))
     }
 }
 
 impl fmt::Display for Solver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.constraints.is_empty() {
+            for c in self.constraints.iter() {
+                writeln!(f, "{}", c)?;
+            }
+            writeln!(f, "=>")?;
+        }
         for (v, rules) in self.rules.iter().enumerate() {
             for t in rules.iter() {
                 writeln!(f, "{} = {}", var_from_number(v), t)?;
             }
         }
+
         Ok(())
     }
 }
@@ -132,7 +174,7 @@ fn get_max_var_index(e: &TypeExpression) -> Option<usize> {
     use TypeExpression::*;
     match e {
         Var(n) => Some(*n),
-        AtomicType(_) => None,
+        Atomic(_) => None,
         Function(v) =>
             v.iter()
                 .map(get_max_var_index)
@@ -150,17 +192,17 @@ fn match_rules(pivot: &TypeExpression, other: &TypeExpression) -> Result<Vec<(us
         (t, Var(n)) => {
             Ok(vec![(*n, TypeExpression::clone(t))])
         }
-        (AtomicType(a), AtomicType(b)) => {
+        (Atomic(a), Atomic(b)) => {
             if a == b {
                 Ok(Vec::new())
             } else {
                 Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
             }
         }
-        (AtomicType(_), Function(_)) => {
+        (Atomic(_), Function(_)) => {
             Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
         }
-        (Function(_), AtomicType(_)) => {
+        (Function(_), Atomic(_)) => {
             Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
         }
         (Function(a), Function(b)) => {
@@ -186,38 +228,17 @@ fn match_rules(pivot: &TypeExpression, other: &TypeExpression) -> Result<Vec<(us
     }
 }
 
-/// Substitute variable with its value in a target type expression.
-fn substitute(var_index: usize, value: &TypeExpression, target: &mut TypeExpression) {
-    use TypeExpression::*;
-    match target {
-        AtomicType(_) => (),
-        Var(n) if *n == var_index => *target = TypeExpression::clone(value),
-        Var(_) => (),
-        Function(v) => 
-            v.iter_mut().for_each(|t| substitute(var_index, value, t))
-    }
-}
-
-/// Rename free variables in a type expression using a mapping (old number -> new number).
-fn rename_vars(mapping: &HashMap<usize, usize>, value: TypeExpression) -> TypeExpression {
-    use TypeExpression::*;
-    match value {
-        AtomicType(_) => value,
-        Var(n) => Var(mapping[&n]),
-        Function(v) => 
-            Function(v.into_iter().map(|p| rename_vars(mapping, p)).collect())
-    }
-}
-
 pub struct Solution {
     rules: Vec<TypeExpression>,
+    constraints: Vec<TypeConstraint>,
     free_vars_count: usize,
 }
 
 impl Solution {
-    fn new(rules: Vec<TypeExpression>, free_vars_count: usize) -> Self {
+    fn new(rules: Vec<TypeExpression>, constraints: Vec<TypeConstraint>, free_vars_count: usize) -> Self {
         Self {
             rules,
+            constraints,
             free_vars_count
         }
     }
@@ -225,7 +246,7 @@ impl Solution {
     pub fn translate_type(&self, t: TypeExpression) -> TypeExpression {
         use TypeExpression::*;
         match t {
-            AtomicType(_) => t,
+            Atomic(_) => t,
             Var(n) => TypeExpression::clone(&self.rules[n]),
             Function(v) => Function(v.into_iter().map(|x| self.translate_type(x)).collect())
         }
@@ -238,10 +259,20 @@ impl Solution {
     pub fn get_free_vars_count(&self) -> usize {
         self.free_vars_count
     }
+
+    pub fn clone_type_constraints(&self) -> Vec<TypeConstraint> {
+        self.constraints.to_owned()
+    }
 }
 
 impl fmt::Display for Solution {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.constraints.is_empty() {
+            for s in self.constraints.iter().map(|c| format!("{}", c)).intersperse(", ".to_string()) {
+                f.write_str(&s)?;
+            }
+            f.write_str(" =>\n")?;
+        }
         for (v, rule) in self.rules.iter().enumerate() {
             writeln!(f, "{} = {}", var_from_number(v), rule)?;
         }
@@ -259,13 +290,13 @@ mod tests {
     fn test_match_rules() {
         // atomic vs atomic
         {
-            let a = TypeExpression::AtomicType(AtomicType::Void);
-            let b = TypeExpression::AtomicType(AtomicType::Void);
+            let a = TypeExpression::Atomic(AtomicType::Void);
+            let b = TypeExpression::Atomic(AtomicType::Void);
             assert!(match_rules(&a, &b).is_ok());
         }
         {
-            let a = TypeExpression::AtomicType(AtomicType::Void);
-            let b = TypeExpression::AtomicType(AtomicType::Int(IntType::new(false, IntBits::B8)));
+            let a = TypeExpression::Atomic(AtomicType::Void);
+            let b = TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8)));
             assert!(match_rules(&a, &b).is_err());
         }
     }
@@ -307,15 +338,15 @@ mod tests {
         solver.add_rule(0, Function(vec![Var(1), Var(2), Var(3), Var(7)]));
         solver.add_rule(5, Function(vec![Var(1), Var(2), Var(4)]));
         solver.add_rule(5, Function(vec![
-            AtomicType(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-            AtomicType(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-            AtomicType(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))
+            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))
             ]));
         solver.add_rule(6, Function(vec![Var(4), Var(3), Var(7)]));
         solver.add_rule(6, Function(vec![
-            AtomicType(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-            AtomicType(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-            AtomicType(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))
+            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))
             ]));
         let solution = solver.solve();
         assert!(solution.is_ok());

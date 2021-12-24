@@ -72,7 +72,7 @@ impl TypeVarAllocator {
     }
 
     fn as_type_vars(&self) -> TypeVars {
-        TypeVars::new(self.cur_index)
+        TypeVars::new(self.cur_index, Vec::new())
     }
 }
 
@@ -289,7 +289,7 @@ fn build_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
                     ErrorCause::AtomicTypeParseError(e),
                     position_from_span(&pair.as_span())
                 ))?;
-            Ok(TypeExpression::AtomicType(at))
+            Ok(TypeExpression::Atomic(at))
         }
         Rule::lc_ident => {
             Ok(TypeExpression::Var(
@@ -297,7 +297,7 @@ fn build_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
                     .map_err(|c| Error::new(c, position_from_span(&pair.as_span())))?
                     ))
         }
-        _ if pair.as_str() == "()" => Ok(TypeExpression::AtomicType(AtomicType::Void)),
+        _ if pair.as_str() == "()" => Ok(TypeExpression::Atomic(AtomicType::Void)),
         _ => {
             unreachable!()
         }

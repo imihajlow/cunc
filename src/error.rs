@@ -1,3 +1,4 @@
+use crate::type_constraint::TypeConstraint;
 use crate::type_info::AtomicTypeParseError;
 use crate::type_info::TypeExpression;
 use crate::position::Position;
@@ -18,6 +19,8 @@ pub enum ErrorCause {
     TooManyArguments,
     TypesMismatch(TypeExpression, TypeExpression),
     AtomicTypeParseError(AtomicTypeParseError),
+    TypeConstraintMismatch(TypeConstraint),
+    TypeConstraintsIncompatible(TypeConstraint, TypeConstraint),
 }
 
 impl Error {
@@ -40,6 +43,8 @@ impl fmt::Display for ErrorCause {
             TooManyArguments => f.write_str("too many arguments"),
             TypesMismatch(t1, t2) => write!(f, "cannot match `{}' against `{}'", t1, t2),
             AtomicTypeParseError(e) => write!(f, "{}", e),
+            TypeConstraintMismatch(c) => write!(f, "Cannot match type constraint: {}", c),
+            TypeConstraintsIncompatible(c1, c2) => write!(f, "Incompatible type constraints: `{}' and `{}'", c1, c2),
         }
     }
 }
