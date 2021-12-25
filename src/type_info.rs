@@ -1,3 +1,4 @@
+use crate::util::max_options;
 use std::collections::HashMap;
 use crate::type_var_allocator::TypeVarAllocator;
 use crate::util::var_from_number;
@@ -6,7 +7,7 @@ use std::{str::FromStr};
 
 use std::fmt;
 use itertools::Itertools;
-use crate::{error::{ErrorCause}};
+
 
 #[derive(Debug, Clone)]
 pub struct TypeInfo {
@@ -129,6 +130,17 @@ impl TypeExpression {
             Atomic(_) => true,
             Var(_) => false,
             Function(a, b) => a.is_fixed() && b.is_fixed()
+        }
+    }
+
+    /// Find maximum variable index in a type expression. Returns None if expression contains no variables.
+    pub fn get_max_var_index(&self) -> Option<usize> {
+        use TypeExpression::*;
+        match self {
+            Var(n) => Some(*n),
+            Atomic(_) => None,
+            Function(a, b) =>
+                max_options(a.get_max_var_index(), b.get_max_var_index())
         }
     }
 }

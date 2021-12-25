@@ -155,6 +155,9 @@ impl<> Module<OptionalType> {
                 let body =
                     function.body.assign_type_vars(&function_context, &mut solver, &mut allocator)?;
                 solver.add_rule(index, TypeExpression::Var(body.t.0));
+                for c in function.type_vars.constraints_iter() {
+                    solver.add_constraint(c.remap_vars(&allocator));
+                }
                 var_annotated_bodies.push((fname.to_owned(), body));
                 allocator.leave_function();
             }

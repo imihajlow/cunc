@@ -1,5 +1,6 @@
 id z = z.
 
+[Num a => a -> a]
 foo = {
   id id
 }.
@@ -9,9 +10,7 @@ inc x = {
 }.
 
 [U8 -> U16]
-inc_u8 x = {
-  sum 1 (convert x)
-}.
+inc_u8 = inc.
 
 bar x y z = {
   let p = x y;

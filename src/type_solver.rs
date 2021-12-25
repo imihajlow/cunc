@@ -1,3 +1,4 @@
+use crate::util::max_options;
 use crate::position::Position;
 use crate::error::Error;
 use crate::error::ErrorCause;
@@ -6,7 +7,6 @@ use crate::type_var_allocator::TypeVarAllocator;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
-use std::cmp;
 use crate::type_info::TypeExpression;
 use crate::util::var_from_number;
 use itertools::Itertools;
@@ -97,8 +97,11 @@ impl Solver {
             let mut max_var_index: Option<usize> = Some(self.rules.len() - 1);
             for rules in self.rules.iter() {
                 for rule in rules.iter() {
-                    max_var_index = max_options(max_var_index, get_max_var_index(rule))
+                    max_var_index = max_options(max_var_index, rule.get_max_var_index())
                 }
+            }
+            for constraint in self.constraints.iter() {
+                max_var_index = max_options(max_var_index, constraint.get_max_var_index());
             }
             max_var_index.unwrap()
         };
@@ -162,31 +165,13 @@ impl fmt::Display for Solver {
     }
 }
 
-fn max_options<T>(a: Option<T>, b: Option<T>) -> Option<T>
-    where T: Ord + Copy {
-    match (a, b) {
-        (Some(x), Some(y)) => Some(cmp::max(x, y)),
-        (Some(x), None) => Some(x),
-        (None, Some(y)) => Some(y),
-        _ => None
-    }       
-}
-
-/// Find maximum variable index in a type expression. Returns None if expression contains no variables.
-fn get_max_var_index(e: &TypeExpression) -> Option<usize> {
-    use TypeExpression::*;
-    match e {
-        Var(n) => Some(*n),
-        Atomic(_) => None,
-        Function(a, b) =>
-            max_options(get_max_var_index(a), get_max_var_index(b))
-    }
-}
-
 /// Match two type expressions and produce new type rules resulting from their equality.
 fn match_rules(pivot: &TypeExpression, other: &TypeExpression) -> Result<Vec<(usize, TypeExpression)>, ErrorCause> {
     use TypeExpression::*;
     match (pivot, other) {
+        (Var(n), Var(m)) if n == m => {
+            Ok(Vec::new())
+        }
         (Var(n), t) => {
             Ok(vec![(*n, TypeExpression::clone(t))])
         }

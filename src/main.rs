@@ -47,8 +47,6 @@ fn main() {
         ap.parse_args_or_exit();
     }
     let m = parse(&fname).unwrap();
-    println!("{:#?}\n\n\n", &m);
-    println!("{}", &m);
     let context = create_default_context();
     match m.deduce_types(&context) {
         Ok(deduced) => println!("+++++++++++++++++++\n\n{}", &deduced),

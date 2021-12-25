@@ -85,6 +85,10 @@ impl TypeConstraint {
         Ok(result)
     }
 
+    pub fn get_max_var_index(&self) -> Option<usize> {
+        self.t.get_max_var_index()
+    }
+
     fn is_compatible_with(&self, other: &Self) -> bool {
         if self.t == other.t {
             self.v.is_compatible_with(&other.v)

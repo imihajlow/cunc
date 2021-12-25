@@ -1,6 +1,7 @@
 use pest::iterators::Pairs;
 use std::collections::HashMap;
 use crate::position::{position_from_span, position_from_linecol, Position};
+use crate::type_constraint::TypeConstraint;
 use crate::type_info::TypeVars;
 use pest::iterators::Pair;
 use crate::error::Error;
@@ -38,8 +39,10 @@ pub fn parse(fname: &str) -> Result<Module<OptionalType>, Error> {
     Ok(result)
 }
 
+#[derive(Debug)]
 struct TypeVarAllocator {
     m: HashMap<String, usize>,
+    constraints: Vec<TypeConstraint>,
     cur_index: usize,
     new_vars_allowed: bool,
 }
@@ -48,6 +51,7 @@ impl TypeVarAllocator {
     fn new() -> Self {
         Self {
             m: HashMap::new(),
+            constraints: Vec::new(),
             cur_index: 0,
             new_vars_allowed: true,
         }
@@ -72,8 +76,12 @@ impl TypeVarAllocator {
         }
     }
 
-    fn as_type_vars(&self) -> TypeVars {
-        TypeVars::new(self.cur_index, Vec::new())
+    fn add_constraint(&mut self, c: TypeConstraint) {
+        self.constraints.push(c);
+    }
+
+    fn into_type_vars(self) -> TypeVars {
+        TypeVars::new(self.cur_index, self.constraints)
     }
 }
 
@@ -106,7 +114,7 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function<OptionalType>, Error> {
     let body_pair = inner.next().unwrap();
     let body_expr = parse_expression(body_pair, &mut tva)?;
     let body = build_lambda(param_idents.into_inner(), type_spec, body_expr)?;
-    Ok(Function::new(name.to_string(), body, tva.as_type_vars(), pos))
+    Ok(Function::new(name.to_string(), body, tva.into_type_vars(), pos))
 }
 
 fn substitute_return_type(body: Expression<OptionalType>, rt: Option<TypeExpression>)
@@ -266,11 +274,16 @@ fn build_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
             })
         }
         Rule::type_spec => {
-            let inner = pair.into_inner().next().unwrap();
-            if let Rule::type_fn = inner.as_rule() {
-                build_type(inner, tva)
+            let mut inner = pair.into_inner();
+            let first = inner.next().unwrap();
+            if let Rule::type_fn = first.as_rule() {
+                build_type(first, tva)
             } else {
-                todo!()
+                assert_eq!(first.as_rule(), Rule::constraints_decl);
+                let type_fn = inner.next().unwrap();
+                assert_eq!(type_fn.as_rule(), Rule::type_fn);
+                parse_type_constraints(first.into_inner(), tva)?;
+                build_type(type_fn, tva)
             }
         }
         Rule::uc_ident => {
@@ -291,4 +304,34 @@ fn build_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
             unreachable!()
         }
     }
+}
+
+fn parse_type_constraints(inner: Pairs<Rule>, tva: &mut TypeVarAllocator)
+    -> Result<(), Error> {
+    for pair in inner {
+        assert_eq!(pair.as_rule(), Rule::constraint_decl);
+        let pos = position_from_span(&pair.as_span());
+        let mut parts = pair.into_inner();
+        let name_part = parts.next().unwrap();
+        assert_eq!(name_part.as_rule(), Rule::uc_ident);
+        let name_pos = position_from_span(&name_part.as_span());
+        match name_part.as_str() {
+            "Num" => {
+                let var_part = parts.next().unwrap();
+                assert_eq!(var_part.as_rule(), Rule::lc_ident);
+                let var_pos = position_from_span(&var_part.as_span());
+                if let Some(_) = parts.peek() {
+                    let pos = position_from_span(&parts.next().unwrap().as_span());
+                    return Err(Error::new(ErrorCause::TooManyArguments, pos))
+                }
+                let var_index = tva.allocate_type_var(var_part.as_str())
+                    .map_err(|c| Error::new(c, var_pos))?;
+                tva.add_constraint(TypeConstraint::new_num(
+                    &TypeExpression::Var(var_index),
+                    &pos));
+            }
+            _ => return Err(Error::new(ErrorCause::UnknownConstraint(name_part.as_str().to_owned()), name_pos))
+        }
+    }
+    Ok(())
 }

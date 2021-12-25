@@ -14,6 +14,7 @@ pub struct Error {
 pub enum ErrorCause {
     SyntaxError(String),
     UnknownIdentifier(String),
+    UnknownConstraint(String),
     Redefinition(String),
     IsAFunction,
     TooManyArguments,
@@ -39,6 +40,7 @@ impl fmt::Display for ErrorCause {
         match self {
             SyntaxError(s) => write!(f, "syntax error: {}", s),
             UnknownIdentifier(s) => write!(f, "unknown identifier `{}'", s),
+            UnknownConstraint(s) => write!(f, "unknown constraint `{}'", s),
             Redefinition(s) => write!(f, "`{}' is redefined", s),
             IsAFunction => f.write_str("a non-functional type declaration for a function"),
             TooManyArguments => f.write_str("too many arguments"),
