@@ -6,11 +6,11 @@ foo {
   id id
 }
 
-inc {
-  sum 1
+inc x {
+  sum 1 (convert x)
 }
 
-[U8 -> U8]
-inc_u8 {
-  sum 1
+[U8 -> U16]
+inc_u8 x {
+  sum 1 (convert x)
 }

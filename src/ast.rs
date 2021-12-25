@@ -280,7 +280,9 @@ impl<> Expression<OptionalType> {
                                 // Generic function. Remap generic variables.
                                 allocator.enter_function(tv.get_vars_count(), &self.p);
                                 solver.add_rule(my_var_index, te.remap_vars(allocator));
-                                // TODO type constraints
+                                for c in tv.constraints_iter() {
+                                    solver.add_constraint(c.remap_vars(allocator));
+                                }
                                 allocator.leave_function();
                             }
                         }
@@ -555,7 +557,7 @@ where Expression<Type>: fmt::Display {
 impl<Type: PrefixFormatter> fmt::Display for Expression<Type> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.e)?;
-        self.t.write_with_prefix(f, ": ")
+        self.t.write_with_prefix(f, ":")
     }
 }
 
@@ -579,7 +581,7 @@ where Expression<Type>: fmt::Display {
 impl<Type: PrefixFormatter> fmt::Display for Binding<Type> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", &self.name)?;
-        self.t.write_with_prefix(f, ": ")
+        self.t.write_with_prefix(f, ":")
     }
 }
 

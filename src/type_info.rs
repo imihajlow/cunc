@@ -67,6 +67,10 @@ impl TypeVars {
     pub fn get_vars_count(&self) -> usize {
         self.range
     }
+
+    pub fn constraints_iter(&self) -> core::slice::Iter<TypeConstraint> {
+        self.constraints.iter()
+    }
 }
 
 impl TypeExpression {
