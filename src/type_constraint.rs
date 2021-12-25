@@ -126,7 +126,6 @@ impl BuiltinTypeConstraint {
                     Atomic(t) => {
                         match t {
                             AtomicType::Int(_) => true,
-                            &AtomicType::Void => false,
                         }
                     }
                 }

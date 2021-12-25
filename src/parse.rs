@@ -287,7 +287,6 @@ fn build_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
                     .map_err(|c| Error::new(c, position_from_span(&pair.as_span())))?
                     ))
         }
-        _ if pair.as_str() == "()" => Ok(TypeExpression::Atomic(AtomicType::Void)),
         _ => {
             unreachable!()
         }

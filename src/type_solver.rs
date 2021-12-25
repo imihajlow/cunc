@@ -279,12 +279,12 @@ mod tests {
     fn test_match_rules() {
         // atomic vs atomic
         {
-            let a = TypeExpression::Atomic(AtomicType::Void);
-            let b = TypeExpression::Atomic(AtomicType::Void);
+            let a = TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8)));
+            let b = TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8)));
             assert!(match_rules(&a, &b).is_ok());
         }
         {
-            let a = TypeExpression::Atomic(AtomicType::Void);
+            let a = TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B16)));
             let b = TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8)));
             assert!(match_rules(&a, &b).is_err());
         }

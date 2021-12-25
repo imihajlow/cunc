@@ -42,7 +42,6 @@ pub struct IntType {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AtomicType {
-    Void,
     Int(IntType),
 }
 
@@ -148,8 +147,6 @@ impl FromStr for AtomicType {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.len() == 0 {
             Err(AtomicTypeParseError::Empty)
-        } else if s == "()" {
-            Ok(AtomicType::Void)
         } else {
             let (first, last) = s.split_at(1);
             if first == "S" || first == "U" {
@@ -215,8 +212,7 @@ impl fmt::Display for AtomicType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use AtomicType::*;
         match self {
-            Void => f.write_str("()"),
-            Int(t) => write!(f, "{}", t)
+            Int(t) => write!(f, "{}", t),
         }
     }
 }
