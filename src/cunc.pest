@@ -2,16 +2,15 @@ main = _{ SOI ~ fn_decl* ~ EOI }
 
 fn_decl = {
     type_spec? ~
-    fn_idents ~
-    fn_body
+    lc_ident ~
+    fn_param_idents ~
+    "=" ~
+    expression ~
+    "."
 }
 
-fn_idents = {
-    lc_ident+
-}
-
-fn_body = {
-    "{" ~ statement* ~ expression ~ "}"
+fn_param_idents = {
+    lc_ident*
 }
 
 type_spec = {
@@ -29,11 +28,10 @@ constraint_decl = {
 
 type_fn = {
     (type_single ~ !"->") |
-    (type_single ~ ("->" ~ type_single)+)
+    (type_single ~ "->" ~ type_fn)
 }
 
 type_single = _{
-    "()" |
     ("(" ~ type_fn ~ ")") |
     (uc_ident | lc_ident)
 }
@@ -42,16 +40,14 @@ var_type_spec = {
     ":" ~ type_single
 }
 
-statement = {
-    (assignment | expression) ~ ";"
-}
-
 assignment = {
-    "let" ~ lc_ident ~ var_type_spec? ~ "=" ~ expression
+    "let" ~ lc_ident ~ var_type_spec? ~ "=" ~ expression ~ ";" ~ expression
 }
 
 expression = {
-    application
+    assignment |
+    application |
+    ("{" ~ expression ~ "}")
 }
 
 application = {

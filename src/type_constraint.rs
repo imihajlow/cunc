@@ -121,8 +121,7 @@ impl BuiltinTypeConstraint {
             Self::Num => {
                 use TypeExpression::*;
                 match t {
-                    Function(v) if v.len() == 1 => self.check(v.first().unwrap()),
-                    Function(_) => false,
+                    Function(_, _) => false,
                     Var(_) => true,
                     Atomic(t) => {
                         match t {

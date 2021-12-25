@@ -178,10 +178,8 @@ fn get_max_var_index(e: &TypeExpression) -> Option<usize> {
     match e {
         Var(n) => Some(*n),
         Atomic(_) => None,
-        Function(v) =>
-            v.iter()
-                .map(get_max_var_index)
-                .fold(None, max_options)
+        Function(a, b) =>
+            max_options(get_max_var_index(a), get_max_var_index(b))
     }
 }
 
@@ -202,30 +200,15 @@ fn match_rules(pivot: &TypeExpression, other: &TypeExpression) -> Result<Vec<(us
                 Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
             }
         }
-        (Atomic(_), Function(_)) => {
+        (Atomic(_), Function(_, _)) => {
             Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
         }
-        (Function(_), Atomic(_)) => {
+        (Function(_, _), Atomic(_)) => {
             Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
         }
-        (Function(a), Function(b)) => {
-            let common = if a.len() == b.len() {
-                a.len()
-            } else {
-                std::cmp::min(a.len(), b.len()) - 1
-            };
-            let mut result: Vec<(usize, TypeExpression)> = Vec::new();
-            for i in 0..common {
-                result.extend(match_rules(&a[i], &b[i])?);
-            }
-            if common != a.len() {
-                let (one, many) = if a.len() < b.len() {
-                    (a.last().unwrap(), Function(b.split_at(common).1.to_vec()))
-                } else {
-                    (b.last().unwrap(), Function(a.split_at(common).1.to_vec()))
-                };
-                result.extend(match_rules(one, &many)?);
-            }
+        (Function(h1, t1), Function(h2, t2)) => {
+            let mut result = match_rules(h1, h2)?;
+            result.extend(match_rules(t1, t2)?);
             Ok(result)
         }
     }
@@ -251,7 +234,10 @@ impl Solution {
         match t {
             Atomic(_) => t,
             Var(n) => TypeExpression::clone(&self.rules[n]),
-            Function(v) => Function(v.into_iter().map(|x| self.translate_type(x)).collect())
+            Function(h, t) =>
+                Function(
+                    Box::new(self.translate_type(*h)),
+                    Box::new(self.translate_type(*t)))
         }
     }
 
@@ -316,11 +302,38 @@ mod tests {
         */
         
         use TypeExpression::*;
-        solver.add_rule(0, Function(vec![Var(1), Var(2), Var(3), Var(7)]));
-        solver.add_rule(5, Function(vec![Var(1), Var(2), Var(4)]));
-        solver.add_rule(5, Function(vec![Var(8), Var(8), Var(8)]));
-        solver.add_rule(6, Function(vec![Var(4), Var(3), Var(7)]));
-        solver.add_rule(6, Function(vec![Var(9), Var(9), Var(9)]));
+        // solver.add_rule(0, Function(vec![Var(1), Var(2), Var(3), Var(7)]));
+        solver.add_rule(0, Function(
+            Box::new(Var(1)),
+            Box::new(Function(
+                Box::new(Var(2)),
+                Box::new(Function(
+                    Box::new(Var(3)),
+                    Box::new(Var(7))))))));
+        // solver.add_rule(5, Function(vec![Var(1), Var(2), Var(4)]));
+        solver.add_rule(5, Function(
+            Box::new(Var(1)),
+            Box::new(Function(
+                Box::new(Var(2)),
+                Box::new(Var(4))))));
+        // solver.add_rule(5, Function(vec![Var(8), Var(8), Var(8)]));
+        solver.add_rule(5, Function(
+            Box::new(Var(8)),
+            Box::new(Function(
+                Box::new(Var(8)),
+                Box::new(Var(8))))));
+        // solver.add_rule(6, Function(vec![Var(4), Var(3), Var(7)]));
+        solver.add_rule(6, Function(
+            Box::new(Var(4)),
+            Box::new(Function(
+                Box::new(Var(3)),
+                Box::new(Var(7))))));
+        // solver.add_rule(6, Function(vec![Var(9), Var(9), Var(9)]));
+        solver.add_rule(6, Function(
+            Box::new(Var(9)),
+            Box::new(Function(
+                Box::new(Var(9)),
+                Box::new(Var(9))))));
         let solution = solver.solve();
         assert!(solution.is_ok());
         assert!(solution.unwrap().get_free_vars_count() == 1);
@@ -338,19 +351,46 @@ mod tests {
         */
         use crate::type_info;
         use TypeExpression::*;
-        solver.add_rule(0, Function(vec![Var(1), Var(2), Var(3), Var(7)]));
-        solver.add_rule(5, Function(vec![Var(1), Var(2), Var(4)]));
-        solver.add_rule(5, Function(vec![
-            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))
-            ]));
-        solver.add_rule(6, Function(vec![Var(4), Var(3), Var(7)]));
-        solver.add_rule(6, Function(vec![
-            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))
-            ]));
+        // solver.add_rule(0, Function(vec![Var(1), Var(2), Var(3), Var(7)]));
+        solver.add_rule(0, Function(
+            Box::new(Var(1)),
+            Box::new(Function(
+                Box::new(Var(2)),
+                Box::new(Function(
+                    Box::new(Var(3)),
+                    Box::new(Var(7))))))));
+        // solver.add_rule(5, Function(vec![Var(1), Var(2), Var(4)]));
+        solver.add_rule(5, Function(
+            Box::new(Var(1)),
+            Box::new(Function(
+                Box::new(Var(2)),
+                Box::new(Var(4))))));
+        // solver.add_rule(5, Function(vec![
+        //     Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+        //     Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+        //     Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))
+        //     ]));
+        solver.add_rule(5, Function(
+            Box::new(Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))),
+            Box::new(Function(
+                Box::new(Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))),
+                Box::new(Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))))))));
+        // solver.add_rule(6, Function(vec![Var(4), Var(3), Var(7)]));
+        solver.add_rule(6, Function(
+            Box::new(Var(4)),
+            Box::new(Function(
+                Box::new(Var(3)),
+                Box::new(Var(7))))));
+        // solver.add_rule(6, Function(vec![
+        //     Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+        //     Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+        //     Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))
+        //     ]));
+        solver.add_rule(6, Function(
+            Box::new(Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))),
+            Box::new(Function(
+                Box::new(Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))),
+                Box::new(Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))))))));
         let solution = solver.solve();
         assert!(solution.is_ok());
         assert!(solution.unwrap().get_free_vars_count() == 0);

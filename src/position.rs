@@ -20,6 +20,47 @@ pub fn position_from_linecol(p: LineColLocation) -> Position {
     }
 }
 
+impl Position {
+    pub fn merge(&self, other: &Position) -> Position {
+        use Position::*;
+        match (self, other) {
+            (Builtin, p) => Position::clone(p),
+            (p, Builtin) => Position::clone(p),
+            (Pos(a,b), Pos(c,d)) => {
+                if before((*a,*b), (*c,*d)) {
+                    Position::Span((*a,*b), (*c,*d))
+                } else {
+                    Position::Span((*c,*d), (*a,*b))
+                }
+            }
+            (Pos(a,b), Span(f,t)) => {
+                if before(*f, (*a,*b)) && before((*a,*b), *t) {
+                    Span(*f,*t)
+                } else if before((*a, *b), *f) {
+                    Span((*a,*b), *t)
+                } else {
+                    Span(*f, (*a,*b))
+                }
+            }
+            (Span(_,_), Pos(_,_)) => other.merge(self),
+            (Span(f1,t1), Span(f2,t2)) => {
+                Span(
+                    if before(*f1, *f2) { *f1 } else { *f2 },
+                    if before(*t1, *t2) { *t1 } else { *t2 }
+                    )
+            }
+        }
+    }
+}
+
+fn before(p1: (usize, usize), p2: (usize, usize)) -> bool {
+    if p1.0 == p2.0 {
+        p1.1 < p2.1
+    } else {
+        p1.0 < p2.0
+    }
+}
+
 impl fmt::Display for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

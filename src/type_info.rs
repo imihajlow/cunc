@@ -18,7 +18,7 @@ pub struct TypeInfo {
 pub enum TypeExpression {
     Atomic(AtomicType),
     Var(usize),
-    Function(Vec<TypeExpression>),
+    Function(Box<Self>, Box<Self>),
 }
 
 #[derive(Debug, Clone)]
@@ -74,24 +74,13 @@ impl TypeVars {
 }
 
 impl TypeExpression {
-    pub fn split_param_type(self) -> Result<(Self, Self), ErrorCause> {
-        match self {
-            Self::Function(parts) => {
-                let count = parts.len();
-                if count == 0 {
-                    return Err(ErrorCause::TooManyArguments);
-                }
-                let mut parts_iter = parts.into_iter();
-                let first = parts_iter.next().unwrap();
-                let rest = match count - 1 {
-                    0 => return Err(ErrorCause::TooManyArguments),
-                    1 => parts_iter.next().unwrap(),
-                    _ => Self::Function(parts_iter.collect())
-                };
-                Ok((first, rest))
-            }
+    pub fn new_from_vec(mut v: Vec<TypeExpression>) -> Self {
+        match v.len() {
+            0 => panic!(),
+            1 => v.pop().unwrap(),
             _ => {
-                Err(ErrorCause::TooManyArguments)
+                let head = v.drain(0..1).next().unwrap();
+                TypeExpression::Function(Box::new(head), Box::new(TypeExpression::new_from_vec(v)))
             }
         }
     }
@@ -102,7 +91,9 @@ impl TypeExpression {
         match self {
             Atomic(_) => TypeExpression::clone(self),
             Var(n) => Var(allocator.map_existing(*n)),
-            Function(v) => Function(v.iter().map(|t| t.remap_vars(allocator)).collect())
+            Function(a, b) => Function(
+                Box::new(a.remap_vars(allocator)),
+                Box::new(b.remap_vars(allocator)))
         }
     }
 
@@ -112,8 +103,9 @@ impl TypeExpression {
         match self {
             Atomic(_) => self,
             Var(n) => Var(mapping[&n]),
-            Function(v) => 
-                Function(v.into_iter().map(|p| p.rename_vars(mapping)).collect())
+            Function(a, b) => Function(
+                Box::new(a.rename_vars(mapping)),
+                Box::new(b.rename_vars(mapping)))
         }
     }
 
@@ -124,8 +116,10 @@ impl TypeExpression {
             Atomic(_) => (),
             Var(n) if *n == var_index => *self = TypeExpression::clone(value),
             Var(_) => (),
-            Function(v) => 
-                v.iter_mut().for_each(|t| t.substitute(var_index, value))
+            Function(ref mut a, ref mut b) => {
+                a.substitute(var_index, value);
+                b.substitute(var_index, value);
+            }
         }
     }
 
@@ -135,7 +129,7 @@ impl TypeExpression {
         match self {
             Atomic(_) => true,
             Var(_) => false,
-            Function(v) => v.iter().all(|e| e.is_fixed())
+            Function(a, b) => a.is_fixed() && b.is_fixed()
         }
     }
 }
@@ -207,12 +201,11 @@ impl fmt::Display for TypeExpression {
         match self {
             Atomic(t) => write!(f, "{}", t),
             Var(n) => f.write_str(&var_from_number(*n)),
-            Function(ts) => {
-                f.write_str("(")?;
-                for s in ts.iter().map(|t| format!("{}", t)).intersperse(" -> ".to_string()) {
-                    f.write_str(&s)?;
+            Function(a, b) => {
+                match **a {
+                    Function(_, _) => write!(f, "({}) -> {}", a, b),
+                    _ => write!(f, "{} -> {}", a, b)
                 }
-                f.write_str(")")
             }
         }
     }

@@ -1,5 +1,6 @@
+use pest::iterators::Pairs;
 use std::collections::HashMap;
-use crate::position::{position_from_span, position_from_linecol};
+use crate::position::{position_from_span, position_from_linecol, Position};
 use crate::type_info::TypeVars;
 use pest::iterators::Pair;
 use crate::error::Error;
@@ -83,138 +84,95 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function<OptionalType>, Error> {
     let pos = position_from_span(&pair.as_span());
     let mut inner = pair.into_inner();
     let mut tva = TypeVarAllocator::new();
-    let (type_spec, idents) = {
+    let (type_spec, name, param_idents) = {
         let p = inner.next().unwrap();
         match p.as_rule() {
             Rule::type_spec =>
-                (Some(build_type(p, &mut tva)?), inner.next().unwrap()),
-            Rule::fn_idents => (None, p),
+                (
+                    Some(build_type(p, &mut tva)?),
+                    inner.next().unwrap().as_str(),
+                    inner.next().unwrap()
+                ),
+            Rule::lc_ident =>
+                (
+                    None,
+                    p.as_str(),
+                    inner.next().unwrap()
+                ),
             _ => unreachable!()
         }
     };
     tva.disallow_new_vars();
-    let fn_body = inner.next().unwrap();
-    let body_pos = position_from_span(&fn_body.as_span());
-    let (statements, tail) = parse_fn_body(fn_body, &mut tva)?;
-    let (name, bindings, ret_type) = build_bindings(idents, type_spec)?;
-    let lambda = Lambda::new(bindings, OptionalType(ret_type), statements, tail, body_pos);
-    Ok(Function::new(name, lambda, tva.as_type_vars(), pos))
+    let body_pair = inner.next().unwrap();
+    let body_expr = parse_expression(body_pair, &mut tva)?;
+    let body = build_lambda(param_idents.into_inner(), type_spec, body_expr)?;
+    Ok(Function::new(name.to_string(), body, tva.as_type_vars(), pos))
 }
 
-fn build_bindings(fn_idents: Pair<Rule>, type_spec: Option<TypeExpression>) ->
-        Result<(String, Vec<Binding<OptionalType>>, Option<TypeExpression>), Error> {
-    // fn_idents = { lc_ident+ }
-    let idents_pos = position_from_span(&fn_idents.as_span());
-    let mut idents_iter = fn_idents.into_inner().into_iter();
-    let name = idents_iter.next().unwrap().as_str().to_owned();
-    let mut strpos = idents_iter.map(|p| {
-        assert!(p.as_rule() == Rule::lc_ident);
-        let pos = position_from_span(&p.as_span());
-        let s = p.as_str().to_owned();
-        (s, pos)
-    });
-    match type_spec {
+fn substitute_return_type(body: Expression<OptionalType>, rt: Option<TypeExpression>)
+    -> Result<Expression<OptionalType>, Error> {
+    match (&body.t.0, rt) {
+        (None, None) => Ok(body),
+        (Some(_), None) => Ok(body),
+        (None, Some(t)) => Ok(Expression::<OptionalType>::new(body.e, body.p, Some(t))),
+        (Some(_), Some(_)) => Err(Error::new(ErrorCause::MultipleTypeSpecification, body.p))
+    }
+}
+
+/// Build maybe nested lambda expression from a list of params, type and body.
+fn build_lambda(mut param_idents: Pairs<Rule>,
+                types: Option<TypeExpression>,
+                body: Expression<OptionalType>)
+            -> Result<Expression<OptionalType>, Error> {
+    match param_idents.next() {
         None => {
-            // No type spec => untyped bindings
-            Ok((name, strpos.map(|(s,p)| {
-                Binding::new(s, OptionalType(None), p)
-            }).collect(), None))
+            substitute_return_type(body, types)
         }
-        Some(ref t) => match t {
-            TypeExpression::Function(ts) => {
-                // Function type => create bindings
-                let mut bindings: Vec<Binding<OptionalType>> = Vec::new();
-                for (i, (s, pos)) in strpos.enumerate() {
-                    match ts.get(i) {
-                        Some(t) =>
-                            bindings.push(Binding::new(s, OptionalType(Some(TypeExpression::clone(t))), pos)),
-                        None =>
-                            return Err(Error::new(ErrorCause::TooManyArguments, pos))
-                    }
-                }
-                match ts.get(bindings.len()..) {
-                    None =>
-                        Err(Error::new(ErrorCause::TooManyArguments, idents_pos)),
-                    Some(a) if a.len() == 1 =>
-                        Ok((name, bindings, Some(TypeExpression::clone(a.first().unwrap())))),
-                    Some(a) =>
-                        Ok((name, bindings, Some(TypeExpression::Function(a.to_vec()))))
-                }
-            }
-            _ => {
-                if strpos.next().is_none() {
-                    Ok((name, Vec::new(), type_spec))
-                } else {
-                    Err(Error::new(ErrorCause::IsAFunction, idents_pos))
-                }
-            }
+        Some(p) if p.as_str().len() == 0 => {
+            substitute_return_type(body, types)
         }
-    }
-}
-
-fn parse_fn_body(body: Pair<Rule>, tva: &mut TypeVarAllocator) ->
-    Result<(Vec<Statement<OptionalType>>, Expression<OptionalType>), Error> {
-    // body: fn_body
-    let inner = body.into_inner();
-    let mut tail: Option<Expression<OptionalType>> = None;
-    let mut statements: Vec<Statement<OptionalType>> = Vec::new();
-    for pair in inner.into_iter() {
-        match pair.as_rule() {
-            Rule::statement => {
-                statements.push(parse_statement(pair, tva)?);
-            }
-            Rule::expression => {
-                tail = Some(parse_expression(pair)?);
-                break;
-            }
-            _ => unreachable!()
-        }
-    }
-    Ok((statements, tail.unwrap()))
-}
-
-fn parse_statement(pair: Pair<Rule>, tva: &mut TypeVarAllocator)
-        -> Result<Statement<OptionalType>, Error> {
-    let inner = pair.into_inner().next().unwrap();
-    match inner.as_rule() {
-        Rule::expression => {
-            Ok(Statement::new_expr(parse_expression(inner)?))
-        }
-        Rule::assignment => {
-            // "let" ~ lc_ident ~ (":" ~ type_single)? ~ "=" ~ expression
-            let mut parts = inner.into_inner();
-            let name_pair = parts.next().unwrap();
-            let name_pos = position_from_span(&name_pair.as_span());
-            let name = name_pair.as_str();
-            let (t, expr) = {
-                let part2 = parts.next().unwrap();
-                match part2.as_rule() {
-                    Rule::var_type_spec => {
-                        (Some(build_type(part2, tva)?), parse_expression(parts.next().unwrap())?)
-                    }
-                    Rule::expression => {
-                        (None, parse_expression(part2)?)
-                    }
-                    _ => unreachable!()
-                }
+        Some(p) => {
+            let param_pos = position_from_span(&p.as_span());
+            let param_name = p.as_str().to_string();
+            // It's at least a function with one argument.
+            // If a type is specified, it must be a function type.
+            let (param_type, rest_types) = match types {
+                Some(TypeExpression::Function(a, b)) =>
+                    (Some(*a), Some(*b)),
+                Some(_) =>
+                    return Err(Error::new(ErrorCause::TooManyArguments, param_pos)),
+                None =>
+                    (None, None)
             };
-            let binding = Binding::new(name.to_string(), OptionalType(t), name_pos);
-            Ok(Statement::new_let(binding, expr))
+            let binding: Binding<OptionalType> =
+                Binding::new(param_name, OptionalType(param_type), Position::clone(&param_pos));
+            let inner_expression =
+                build_lambda(param_idents, rest_types, body)?;
+            let my_position = param_pos.merge(&inner_expression.p);
+            let lambda: Lambda<OptionalType> =
+                Lambda::new(binding,
+                    OptionalType(None),
+                    inner_expression,
+                    Position::clone(&my_position));
+            let abstraction: ExpressionVariant<OptionalType> =
+                ExpressionVariant::Abstraction(lambda);
+            Ok(Expression::<OptionalType>::new(abstraction, my_position, None))
         }
-        _ => unreachable!()
     }
 }
 
-fn parse_expression(pair: Pair<Rule>) -> Result<Expression<OptionalType>, Error> {
+fn parse_expression(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<Expression<OptionalType>, Error> {
     let pos = position_from_span(&pair.as_span());
-    let inner = pair.into_inner().next().unwrap();
-    match inner.as_rule() {
+    match pair.as_rule() {
+        Rule::expression => {
+            parse_expression(pair.into_inner().next().unwrap(), tva)
+        }
         Rule::application => {
-            let mut parsed_parts: Vec<Expression<OptionalType>> = Vec::new();
-            for part in inner.into_inner() {
+            let mut collected_expr: Option<Expression<OptionalType>> = None;
+            for part in pair.into_inner() {
                 let part_position = position_from_span(&part.as_span());
                 let parsed_part: Expression<OptionalType> = if let Rule::expression = part.as_rule() {
-                    parse_expression(part)?
+                    parse_expression(part, tva)?
                 } else {
                     let parsed_part = match part.as_rule() {
                         Rule::lc_ident => {
@@ -236,15 +194,40 @@ fn parse_expression(pair: Pair<Rule>) -> Result<Expression<OptionalType>, Error>
                     };
                     Expression::<OptionalType>::new(parsed_part, part_position, None)
                 };
-                parsed_parts.push(parsed_part);
+                collected_expr = match collected_expr {
+                    None => Some(parsed_part),
+                    Some(e) => Some(Expression::new_application(e, parsed_part))
+                }
             }
-            match parsed_parts.len() {
-                0 => unreachable!(),
-                1 => Ok(parsed_parts.pop().unwrap()),
-                _ =>
-                    Ok(Expression::<OptionalType>::new(
-                        ExpressionVariant::Application(parsed_parts), pos, None))
-            }
+            Ok(collected_expr.unwrap())
+        }
+        Rule::assignment => {
+            let mut inner = pair.into_inner();
+            let name_pair = inner.next().unwrap();
+            assert_eq!(name_pair.as_rule(), Rule::lc_ident);
+            let name_pos = position_from_span(&name_pair.as_span());
+            let name = name_pair.as_str().to_string();
+            let (var_type_spec, value) = {
+                let next = inner.next().unwrap();
+                match next.as_rule() {
+                    Rule::var_type_spec => {
+                        let e_pair = inner.next().unwrap();
+                        assert!(e_pair.as_rule() == Rule::expression);
+                        (Some(build_type(next, tva)?), parse_expression(e_pair, tva)?)
+                    }
+                    Rule::expression => {
+                        (None, parse_expression(next, tva)?)
+                    }
+                    _ => unreachable!()
+                }
+            };
+            let body_pair = inner.next().unwrap();
+            assert!(body_pair.as_rule() == Rule::expression);
+            let body = parse_expression(body_pair, tva)?;
+            let binding: Binding<OptionalType> =
+                Binding::new(name, OptionalType(var_type_spec), name_pos);
+            let ev = ExpressionVariant::Let(binding, Box::new(value), Box::new(body));
+            Ok(Expression::<OptionalType>::new(ev, pos, None))
         }
         _ => unreachable!()
     }
@@ -268,12 +251,19 @@ fn build_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
     match pair.as_rule() {
         Rule::var_type_spec => build_type(pair.into_inner().next().unwrap(), tva),
         Rule::type_fn => {
-            Ok(TypeExpression::Function(
-                pair
-                    .into_inner()
-                    .map(|p| build_type(p, tva))
-                    .collect::<Result<Vec<_>,_>>()?))
-
+            let mut inner = pair.into_inner();
+            let head = build_type(inner.next().unwrap(), tva)?;
+            let tail = match inner.next() {
+                Some(t) => {
+                    assert!(t.as_rule() == Rule::type_fn);
+                    Some(build_type(t, tva)?)
+                }
+                None => None
+            };
+            Ok(match tail {
+                None => head,
+                Some(t) => TypeExpression::Function(Box::new(head), Box::new(t))
+            })
         }
         Rule::type_spec => {
             let inner = pair.into_inner().next().unwrap();
