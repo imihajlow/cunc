@@ -131,6 +131,7 @@ impl BuiltinTypeConstraint {
                         match t {
                             AtomicType::Int(_) => true,
                             AtomicType::Function => false,
+                            &AtomicType::User(_) => false,
                         }
                     }
                 }

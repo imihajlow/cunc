@@ -1,7 +1,30 @@
-main = _{ SOI ~ fn_decl* ~ EOI }
+main = _{ SOI ~ (fn_decl | type_def)* ~ EOI }
+
+type_def = {
+    "data" ~
+    uc_ident ~
+    type_def_param_idents ~
+    "=" ~
+    type_sum_spec ~
+    "."
+}
+
+type_def_param_idents = {
+    lc_ident*
+}
+
+type_sum_spec = {
+    type_product_spec ~
+    ("|" ~ type_product_spec)*
+}
+
+type_product_spec = {
+    uc_ident ~ terminal_type*
+}
 
 fn_decl = {
     type_spec? ~
+    !"data" ~
     lc_ident ~
     fn_param_idents ~
     "=" ~
@@ -14,8 +37,8 @@ fn_param_idents = {
 }
 
 type_spec = {
-    ("[" ~ type_fn ~ "]") |
-    ("[" ~ constraints_decl ~ "=>" ~ type_fn ~ "]")
+    ("[" ~ arrow_type ~ "]") |
+    ("[" ~ constraints_decl ~ "=>" ~ arrow_type ~ "]")
 }
 
 constraints_decl = {
@@ -26,18 +49,22 @@ constraint_decl = {
     uc_ident ~ lc_ident+
 }
 
-type_fn = {
-    (type_single ~ !"->") |
-    (type_single ~ "->" ~ type_fn)
+arrow_type = {
+    application_type ~ ("->" ~ arrow_type)*
 }
 
-type_single = _{
-    ("(" ~ type_fn ~ ")") |
-    (uc_ident | lc_ident)
+application_type = {
+    terminal_type+
+}
+
+terminal_type = {
+      ("(" ~ arrow_type ~ ")") |
+      uc_ident |
+      lc_ident
 }
 
 var_type_spec = {
-    ":" ~ type_single
+    "::" ~ arrow_type
 }
 
 assignment = {

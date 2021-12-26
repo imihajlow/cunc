@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use pest::iterators::Pairs;
 use std::collections::HashMap;
 use crate::position::{position_from_span, position_from_linecol, Position};
@@ -5,10 +6,10 @@ use crate::type_constraint::TypeConstraint;
 use crate::type_info::TypeVars;
 use pest::iterators::Pair;
 use crate::error::Error;
-
 use crate::type_info::{TypeExpression, AtomicType};
 use crate::{ast::*, error::ErrorCause};
 use pest::Parser;
+use itertools::Itertools;
 
 #[derive(Parser)]
 #[grammar = "cunc.pest"]
@@ -30,6 +31,10 @@ pub fn parse(fname: &str) -> Result<Module<OptionalType>, Error> {
             Rule::fn_decl => {
                 let fun = parse_function(node)?;
                 result.push_function(fun);
+            }
+            Rule::type_def => {
+                let t = parse_type_definition(node.into_inner())?;
+                result.push_type(t);
             }
             Rule::EOI => (),
             _ => unreachable!()
@@ -83,6 +88,14 @@ impl TypeVarAllocator {
     fn into_type_vars(self) -> TypeVars {
         TypeVars::new(self.cur_index, self.constraints)
     }
+
+    fn get_type_vars(&self) -> TypeVars {
+        TypeVars::new(self.cur_index, Vec::clone(&self.constraints))
+    }
+
+    fn get_arity(&self) -> usize {
+        self.cur_index
+    }
 }
 
 
@@ -97,7 +110,7 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function<OptionalType>, Error> {
         match p.as_rule() {
             Rule::type_spec =>
                 (
-                    Some(build_type(p, &mut tva)?),
+                    Some(parse_type(p, &mut tva)?),
                     inner.next().unwrap().as_str(),
                     inner.next().unwrap()
                 ),
@@ -222,7 +235,7 @@ fn parse_expression(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<Expr
                     Rule::var_type_spec => {
                         let e_pair = inner.next().unwrap();
                         assert!(e_pair.as_rule() == Rule::expression);
-                        (Some(build_type(next, tva)?), parse_expression(e_pair, tva)?)
+                        (Some(parse_type(next, tva)?), parse_expression(e_pair, tva)?)
                     }
                     Rule::expression => {
                         (None, parse_expression(next, tva)?)
@@ -256,16 +269,16 @@ fn parse_bin_constant(pair: Pair<Rule>) -> Result<u64, Error> {
     Ok(u64::from_str_radix(sn, 2).unwrap()) // TODO handle error
 }
 
-fn build_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpression, Error> {
+fn parse_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpression, Error> {
     match pair.as_rule() {
-        Rule::var_type_spec => build_type(pair.into_inner().next().unwrap(), tva),
-        Rule::type_fn => {
+        Rule::var_type_spec => parse_type(pair.into_inner().next().unwrap(), tva),
+        Rule::arrow_type => {
             let mut inner = pair.into_inner();
-            let head = build_type(inner.next().unwrap(), tva)?;
+            let head = parse_type(inner.next().unwrap(), tva)?;
             let tail = match inner.next() {
                 Some(t) => {
-                    assert!(t.as_rule() == Rule::type_fn);
-                    Some(build_type(t, tva)?)
+                    assert_eq!(t.as_rule(), Rule::arrow_type);
+                    Some(parse_type(t, tva)?)
                 }
                 None => None
             };
@@ -274,18 +287,31 @@ fn build_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
                 Some(t) => TypeExpression::new_function(head, t)
             })
         }
+        Rule::application_type => {
+            let mut inner = pair.into_inner();
+            let first = parse_type(inner.next().unwrap(), tva)?;
+            inner
+                .map(|pair| parse_type(pair, tva))
+                .fold_ok(first, |acc, t|
+                    TypeExpression::Composite(
+                        Box::new(acc),
+                        Box::new(t)))
+        }
         Rule::type_spec => {
             let mut inner = pair.into_inner();
             let first = inner.next().unwrap();
-            if let Rule::type_fn = first.as_rule() {
-                build_type(first, tva)
+            if let Rule::arrow_type = first.as_rule() {
+                parse_type(first, tva)
             } else {
                 assert_eq!(first.as_rule(), Rule::constraints_decl);
                 let type_fn = inner.next().unwrap();
-                assert_eq!(type_fn.as_rule(), Rule::type_fn);
+                assert_eq!(type_fn.as_rule(), Rule::arrow_type);
                 parse_type_constraints(first.into_inner(), tva)?;
-                build_type(type_fn, tva)
+                parse_type(type_fn, tva)
             }
+        }
+        Rule::terminal_type => {
+            parse_type(pair.into_inner().next().unwrap(), tva)
         }
         Rule::uc_ident => {
             let at = pair.as_str().parse::<AtomicType>()
@@ -301,7 +327,8 @@ fn build_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
                     .map_err(|c| Error::new(c, position_from_span(&pair.as_span())))?
                     ))
         }
-        _ => {
+        x => {
+            println!("{:?}", x);
             unreachable!()
         }
     }
@@ -335,4 +362,64 @@ fn parse_type_constraints(inner: Pairs<Rule>, tva: &mut TypeVarAllocator)
         }
     }
     Ok(())
+}
+
+fn parse_type_definition(mut inner: Pairs<Rule>)
+        -> Result<SumType, Error> {
+    // uc_ident ~ type_def_param_idents ~ type_sum_spec
+    let name_pair = inner.next().unwrap();
+    assert_eq!(name_pair.as_rule(), Rule::uc_ident);
+    let name_pos = position_from_span(&name_pair.as_span());
+    let name = name_pair.as_str();
+
+    let mut tva = TypeVarAllocator::new();
+    let params_pair = inner.next().unwrap();
+    assert_eq!(params_pair.as_rule(), Rule::type_def_param_idents);
+    let new_type = {
+        let mut new_type = TypeExpression::Atomic(AtomicType::User(name.to_string()));
+        for param_pair in params_pair.into_inner() {
+            assert_eq!(param_pair.as_rule(), Rule::lc_ident);
+            let param_pos = position_from_span(&param_pair.as_span());
+            let param_name = param_pair.as_str();
+            let param_index = tva.allocate_type_var(param_name).map_err(|c| Error::new(c, param_pos))?;
+            new_type = TypeExpression::Composite(
+                Box::new(new_type),
+                Box::new(TypeExpression::Var(param_index)));
+        }
+        new_type
+    };
+    tva.disallow_new_vars();
+    let mut type_constructors: Vec<TypeConstructor> = Vec::new();
+    // tc = type constructor
+    let mut tc_names: HashSet<String> = HashSet::new();
+    let sum_pair = inner.next().unwrap();
+    assert_eq!(sum_pair.as_rule(), Rule::type_sum_spec);
+    for product_pair in sum_pair.into_inner() {
+        assert_eq!(product_pair.as_rule(), Rule::type_product_spec);
+        // let product_pos = position_from_span(&product_pair.as_span());
+        let mut product_pair_inner = product_pair.into_inner();
+        let tc_pair = product_pair_inner.next().unwrap();
+        assert_eq!(tc_pair.as_rule(), Rule::uc_ident);
+        let tc_pos = position_from_span(&tc_pair.as_span());
+        let tc_name = tc_pair.as_str().to_string();
+        let mut fn_vec: Vec<TypeExpression> = Vec::new();
+        for tc_param_pair in product_pair_inner {
+            assert_eq!(tc_param_pair.as_rule(), Rule::terminal_type);
+            let tc_param_type = parse_type(tc_param_pair, &mut tva)?;
+            fn_vec.push(tc_param_type);
+        }
+        if tc_names.contains(&tc_name) {
+            return Err(Error::new(ErrorCause::Redefinition(tc_name), tc_pos))
+        } else {
+            tc_names.insert(String::clone(&tc_name));
+            fn_vec.push(TypeExpression::clone(&new_type));
+            let tc = TypeConstructor::new(
+                tc_name,
+                TypeExpression::new_function_from_vec(fn_vec),
+                tva.get_type_vars(),
+                tc_pos);
+            type_constructors.push(tc);
+        }
+    }
+    Ok(SumType::new(name.to_string(), tva.get_arity(), type_constructors, name_pos))
 }

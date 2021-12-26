@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use crate::graph::ObjectGraph;
 use crate::name_context::NameContext;
 use std::fmt;
+use itertools::Itertools;
 use crate::position::Position;
 use crate::type_info::TypeExpression;
 use crate::type_info::TypeVars;
@@ -76,18 +77,62 @@ pub struct Function<Type> {
 
 #[derive(Debug, Clone)]
 pub struct Module<Type> {
-    functions: Vec<Function<Type>>
+    functions: Vec<Function<Type>>,
+    types: Vec<SumType>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeConstructor {
+    name: String,
+    t: TypeExpression,
+    type_vars: TypeVars,
+    p: Position,
+}
+
+#[derive(Debug, Clone)]
+pub struct SumType {
+    name: String,
+    arity: usize,
+    constructors: Vec<TypeConstructor>,
+    p: Position
 }
 
 impl<Type> Module<Type> {
     pub fn new() -> Self {
         Self {
-            functions: Vec::new()
+            functions: Vec::new(),
+            types: Vec::new(),
         }
     }
 
     pub fn push_function(&mut self, f: Function<Type>) {
         self.functions.push(f);
+    }
+
+    pub fn push_type(&mut self, t: SumType) {
+        self.types.push(t);
+    }
+}
+
+impl TypeConstructor {
+    pub fn new(name: String, t: TypeExpression, type_vars: TypeVars, p: Position) -> Self {
+        Self {
+            name,
+            t,
+            type_vars,
+            p
+        }
+    }
+}
+
+impl SumType {
+    pub fn new(name: String, arity: usize, constructors: Vec<TypeConstructor>, p: Position) -> Self {
+        Self {
+            name,
+            arity,
+            constructors,
+            p
+        }
     }
 }
 
@@ -565,6 +610,26 @@ where Expression<Type>: fmt::Display {
     }
 }
 
+impl fmt::Display for TypeConstructor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} :: {}{}", self.name, self.type_vars, self.t)
+    }
+}
+
+impl fmt::Display for SumType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "data {}", self.name)?;
+        for i in 0..self.arity {
+            write!(f, " {}", var_from_number(i))?;
+        }
+        f.write_str(" = ")?;
+        for s in self.constructors.iter().map(|c| format!("{}", c)).intersperse(" | ".to_string()) {
+            f.write_str(&s)?;
+        }
+        f.write_str(".")
+    }
+}
+
 impl<Type: PrefixFormatter> fmt::Display for Binding<Type> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", &self.name)?;
@@ -583,6 +648,9 @@ impl<Type: PrefixFormatter> fmt::Display for Function<Type> {
 
 impl<Type: PrefixFormatter> fmt::Display for Module<Type> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for t in self.types.iter() {
+            write!(f, "{}\n\n", t)?;
+        }
         for fun in self.functions.iter() {
             write!(f, "{}\n\n", fun)?;
         }

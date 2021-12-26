@@ -45,6 +45,7 @@ pub struct IntType {
 pub enum AtomicType {
     Int(IntType),
     Function,
+    User(String)
 }
 
 #[derive(Debug)]
@@ -81,6 +82,13 @@ impl TypeExpression {
                 Box::new(TypeExpression::Atomic(AtomicType::Function)),
                 Box::new(a))),
             Box::new(b))
+    }
+
+    pub fn new_function_from_vec(v: Vec<Self>) -> Self {
+        assert!(!v.is_empty());
+        let mut it = v.into_iter().rev();
+        let last = it.next().unwrap();
+        it.fold(last, |tail, cur| Self::new_function(cur, tail))
     }
 
     pub fn match_function<'a>(&'a self) -> Option<(&'a Self, &'a Self)> {
@@ -182,12 +190,12 @@ impl FromStr for AtomicType {
                     Ok(8) => IntBits::B8,
                     Ok(16) => IntBits::B16,
                     Ok(32) => IntBits::B32,
-                    Ok(_) => return Err(AtomicTypeParseError::WrongIntSize),
-                    _ => return Err(AtomicTypeParseError::Unknown)
+                    Ok(_) => return Ok(AtomicType::User(s.to_string())),
+                    _ => return Ok(AtomicType::User(s.to_string()))
                 };
                 Ok(AtomicType::Int(IntType { signed, bits }))
             } else {
-                Err(AtomicTypeParseError::Unknown)
+                Ok(AtomicType::User(s.to_string()))
             }
         }
     }
@@ -244,6 +252,7 @@ impl fmt::Display for AtomicType {
         match self {
             Int(t) => write!(f, "{}", t),
             Function => write!(f, "(->)"),
+            User(s) => f.write_str(s),
         }
     }
 }
