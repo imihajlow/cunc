@@ -84,6 +84,7 @@ application = {
 part = _{
     constant |
     lc_ident |
+    uc_ident |
     "(" ~ expression ~ ")"
 }
 

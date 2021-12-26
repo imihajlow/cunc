@@ -197,7 +197,7 @@ fn parse_expression(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<Expr
                     parse_expression(part, tva)?
                 } else {
                     let parsed_part = match part.as_rule() {
-                        Rule::lc_ident => {
+                        Rule::lc_ident | Rule::uc_ident => {
                             ExpressionVariant::Variable(part.as_str().to_string())
                         }
                         Rule::dec_constant => {

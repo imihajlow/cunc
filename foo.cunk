@@ -1,4 +1,4 @@
-data Maybe a = Some a | Nothing.
+data Maybe a = Just a | Nothing.
 
 id z = z.
 
@@ -21,3 +21,9 @@ bar x y z = {
 
 [Maybe a -> b]
 baz x = x.
+
+zoo = Nothing.
+
+zuzu = let x :: U8 = 5; Just x.
+
+foooo = baz zuzu.

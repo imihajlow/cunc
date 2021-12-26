@@ -179,6 +179,16 @@ impl<> Module<OptionalType> {
         let toporder = dep_graph.find_strongly_connected().inverse_topsort().unwrap();
         let mut result: Module<FixedType> = Module::new();
         let mut context: TypeContext<TypeAssignment> = parent_context.push();
+        // Add type constructors into context
+        for t in self.types.iter() {
+            for c in t.constructors.iter() {
+                context.set(&c.name,
+                    &TypeAssignment::ToplevelFunction(
+                        TypeVars::clone(&c.type_vars),
+                        TypeExpression::clone(&c.t)))
+                .map_err(|cause| Error::new(cause, Position::clone(&c.p)))?;
+            }
+        }
         for group in toporder.into_iter() {
             let mut local_context = context.push();
             let mut allocator = TypeVarAllocator::new();
