@@ -19,7 +19,7 @@ pub struct TypeInfo {
 pub enum TypeExpression {
     Atomic(AtomicType),
     Var(usize),
-    Function(Box<Self>, Box<Self>),
+    Composite(Box<Self>, Box<Self>),
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +44,7 @@ pub struct IntType {
 #[derive(Clone, Debug, PartialEq)]
 pub enum AtomicType {
     Int(IntType),
+    Function,
 }
 
 #[derive(Debug)]
@@ -74,14 +75,28 @@ impl TypeVars {
 }
 
 impl TypeExpression {
-    pub fn new_from_vec(mut v: Vec<TypeExpression>) -> Self {
-        match v.len() {
-            0 => panic!(),
-            1 => v.pop().unwrap(),
-            _ => {
-                let head = v.drain(0..1).next().unwrap();
-                TypeExpression::Function(Box::new(head), Box::new(TypeExpression::new_from_vec(v)))
+    pub fn new_function(a: Self, b: Self) -> Self {
+        TypeExpression::Composite(
+            Box::new(TypeExpression::Composite(
+                Box::new(TypeExpression::Atomic(AtomicType::Function)),
+                Box::new(a))),
+            Box::new(b))
+    }
+
+    pub fn match_function<'a>(&'a self) -> Option<(&'a Self, &'a Self)> {
+        use TypeExpression::*;
+        if let Composite(a, b) = self {
+            if let Composite(c, d) = &**a {
+                if let Atomic(AtomicType::Function) = **c {
+                    Some((&d, b))
+                } else {
+                    None
+                }
+            } else {
+                None
             }
+        } else {
+            None
         }
     }
 
@@ -91,7 +106,7 @@ impl TypeExpression {
         match self {
             Atomic(_) => TypeExpression::clone(self),
             Var(n) => Var(allocator.map_existing(*n)),
-            Function(a, b) => Function(
+            Composite(a, b) => Composite(
                 Box::new(a.remap_vars(allocator)),
                 Box::new(b.remap_vars(allocator)))
         }
@@ -103,7 +118,7 @@ impl TypeExpression {
         match self {
             Atomic(_) => self,
             Var(n) => Var(mapping[&n]),
-            Function(a, b) => Function(
+            Composite(a, b) => Composite(
                 Box::new(a.rename_vars(mapping)),
                 Box::new(b.rename_vars(mapping)))
         }
@@ -116,7 +131,7 @@ impl TypeExpression {
             Atomic(_) => (),
             Var(n) if *n == var_index => *self = TypeExpression::clone(value),
             Var(_) => (),
-            Function(ref mut a, ref mut b) => {
+            Composite(ref mut a, ref mut b) => {
                 a.substitute(var_index, value);
                 b.substitute(var_index, value);
             }
@@ -129,7 +144,7 @@ impl TypeExpression {
         match self {
             Atomic(_) => true,
             Var(_) => false,
-            Function(a, b) => a.is_fixed() && b.is_fixed()
+            Composite(a, b) => a.is_fixed() && b.is_fixed()
         }
     }
 
@@ -139,7 +154,7 @@ impl TypeExpression {
         match self {
             Var(n) => Some(*n),
             Atomic(_) => None,
-            Function(a, b) =>
+            Composite(a, b) =>
                 max_options(a.get_max_var_index(), b.get_max_var_index())
         }
     }
@@ -210,10 +225,13 @@ impl fmt::Display for TypeExpression {
         match self {
             Atomic(t) => write!(f, "{}", t),
             Var(n) => f.write_str(&var_from_number(*n)),
-            Function(a, b) => {
+            Composite(a, b) => {
                 match **a {
-                    Function(_, _) => write!(f, "({}) -> {}", a, b),
-                    _ => write!(f, "{} -> {}", a, b)
+                    Atomic(AtomicType::Function) => match **b {
+                        Atomic(_) | Var(_) => write!(f, "{} ->", b),
+                        Composite(_, _) => write!(f, "({}) ->", b),
+                    }
+                    _ => write!(f, "{} {}", a, b)
                 }
             }
         }
@@ -225,6 +243,7 @@ impl fmt::Display for AtomicType {
         use AtomicType::*;
         match self {
             Int(t) => write!(f, "{}", t),
+            Function => write!(f, "(->)"),
         }
     }
 }

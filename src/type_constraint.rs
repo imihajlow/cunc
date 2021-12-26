@@ -125,11 +125,12 @@ impl BuiltinTypeConstraint {
             Self::Num => {
                 use TypeExpression::*;
                 match t {
-                    Function(_, _) => false,
+                    Composite(_, _) => false,
                     Var(_) => true,
                     Atomic(t) => {
                         match t {
                             AtomicType::Int(_) => true,
+                            AtomicType::Function => false,
                         }
                     }
                 }

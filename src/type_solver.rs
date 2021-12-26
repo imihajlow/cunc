@@ -185,13 +185,13 @@ fn match_rules(pivot: &TypeExpression, other: &TypeExpression) -> Result<Vec<(us
                 Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
             }
         }
-        (Atomic(_), Function(_, _)) => {
+        (Atomic(_), Composite(_, _)) => {
             Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
         }
-        (Function(_, _), Atomic(_)) => {
+        (Composite(_, _), Atomic(_)) => {
             Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
         }
-        (Function(h1, t1), Function(h2, t2)) => {
+        (Composite(h1, t1), Composite(h2, t2)) => {
             let mut result = match_rules(h1, h2)?;
             result.extend(match_rules(t1, t2)?);
             Ok(result)
@@ -219,8 +219,8 @@ impl Solution {
         match t {
             Atomic(_) => t,
             Var(n) => TypeExpression::clone(&self.rules[n]),
-            Function(h, t) =>
-                Function(
+            Composite(h, t) =>
+                Composite(
                     Box::new(self.translate_type(*h)),
                     Box::new(self.translate_type(*t)))
         }
@@ -287,38 +287,38 @@ mod tests {
         */
         
         use TypeExpression::*;
-        // solver.add_rule(0, Function(vec![Var(1), Var(2), Var(3), Var(7)]));
-        solver.add_rule(0, Function(
-            Box::new(Var(1)),
-            Box::new(Function(
-                Box::new(Var(2)),
-                Box::new(Function(
-                    Box::new(Var(3)),
-                    Box::new(Var(7))))))));
-        // solver.add_rule(5, Function(vec![Var(1), Var(2), Var(4)]));
-        solver.add_rule(5, Function(
-            Box::new(Var(1)),
-            Box::new(Function(
-                Box::new(Var(2)),
-                Box::new(Var(4))))));
-        // solver.add_rule(5, Function(vec![Var(8), Var(8), Var(8)]));
-        solver.add_rule(5, Function(
-            Box::new(Var(8)),
-            Box::new(Function(
-                Box::new(Var(8)),
-                Box::new(Var(8))))));
-        // solver.add_rule(6, Function(vec![Var(4), Var(3), Var(7)]));
-        solver.add_rule(6, Function(
-            Box::new(Var(4)),
-            Box::new(Function(
-                Box::new(Var(3)),
-                Box::new(Var(7))))));
-        // solver.add_rule(6, Function(vec![Var(9), Var(9), Var(9)]));
-        solver.add_rule(6, Function(
-            Box::new(Var(9)),
-            Box::new(Function(
-                Box::new(Var(9)),
-                Box::new(Var(9))))));
+        // 0 = 1 -> 2 -> 3 -> 7
+        solver.add_rule(0, TypeExpression::new_function(
+            Var(1),
+            TypeExpression::new_function(
+                Var(2),
+                TypeExpression::new_function(
+                    Var(3),
+                    Var(7)))));
+        // 5 = 1 -> 2 -> 4
+        solver.add_rule(5, TypeExpression::new_function(
+            Var(1),
+            TypeExpression::new_function(
+                Var(2),
+                Var(4))));
+        // 5 = 8 -> 8 -> 8
+        solver.add_rule(5, TypeExpression::new_function(
+            Var(8),
+            TypeExpression::new_function(
+                Var(8),
+                Var(8))));
+        // 6 = 4 -> 3 -> 7
+        solver.add_rule(6, TypeExpression::new_function(
+            Var(4),
+            TypeExpression::new_function(
+                Var(3),
+                Var(7))));
+        // 6 = 9 -> 9 -> 9
+        solver.add_rule(6, TypeExpression::new_function(
+            Var(9),
+            TypeExpression::new_function(
+                Var(9),
+                Var(9))));
         let solution = solver.solve();
         assert!(solution.is_ok());
         assert!(solution.unwrap().get_free_vars_count() == 1);
@@ -336,46 +336,38 @@ mod tests {
         */
         use crate::type_info;
         use TypeExpression::*;
-        // solver.add_rule(0, Function(vec![Var(1), Var(2), Var(3), Var(7)]));
-        solver.add_rule(0, Function(
-            Box::new(Var(1)),
-            Box::new(Function(
-                Box::new(Var(2)),
-                Box::new(Function(
-                    Box::new(Var(3)),
-                    Box::new(Var(7))))))));
-        // solver.add_rule(5, Function(vec![Var(1), Var(2), Var(4)]));
-        solver.add_rule(5, Function(
-            Box::new(Var(1)),
-            Box::new(Function(
-                Box::new(Var(2)),
-                Box::new(Var(4))))));
-        // solver.add_rule(5, Function(vec![
-        //     Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-        //     Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-        //     Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))
-        //     ]));
-        solver.add_rule(5, Function(
-            Box::new(Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))),
-            Box::new(Function(
-                Box::new(Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))),
-                Box::new(Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))))))));
-        // solver.add_rule(6, Function(vec![Var(4), Var(3), Var(7)]));
-        solver.add_rule(6, Function(
-            Box::new(Var(4)),
-            Box::new(Function(
-                Box::new(Var(3)),
-                Box::new(Var(7))))));
-        // solver.add_rule(6, Function(vec![
-        //     Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-        //     Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-        //     Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))
-        //     ]));
-        solver.add_rule(6, Function(
-            Box::new(Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))),
-            Box::new(Function(
-                Box::new(Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8)))),
-                Box::new(Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))))))));
+        // 0 = 1 -> 2 -> 3 -> 7
+        solver.add_rule(0, TypeExpression::new_function(
+            Var(1),
+            TypeExpression::new_function(
+                Var(2),
+                TypeExpression::new_function(
+                    Var(3),
+                    Var(7)))));
+        // 5 = 1 -> 2 -> 4
+        solver.add_rule(5, TypeExpression::new_function(
+            Var(1),
+            TypeExpression::new_function(
+                Var(2),
+                Var(4))));
+        // 5 = U8 -> U8 -> U8
+        solver.add_rule(5, TypeExpression::new_function(
+            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+            TypeExpression::new_function(
+                Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+                Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))))));
+        // 6 = 4 -> 3 -> 7
+        solver.add_rule(6, TypeExpression::new_function(
+            Var(4),
+            TypeExpression::new_function(
+                Var(3),
+                Var(7))));
+        // 6 = U8 -> U8 -> U8
+        solver.add_rule(6, TypeExpression::new_function(
+            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+            TypeExpression::new_function(
+                Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+                Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))))));
         let solution = solver.solve();
         assert!(solution.is_ok());
         assert!(solution.unwrap().get_free_vars_count() == 0);

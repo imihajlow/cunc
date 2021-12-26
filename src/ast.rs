@@ -244,9 +244,9 @@ impl<> Expression<OptionalType> {
                 let annotated_b = Box::new(b.assign_type_vars(context, solver, allocator)?);
                 let head_index = annotated_a.t.0;
                 let tail_index = annotated_b.t.0;
-                let fn_type = TypeExpression::Function(
-                    Box::new(TypeExpression::Var(tail_index)),
-                    Box::new(TypeExpression::Var(my_var_index)));
+                let fn_type = TypeExpression::new_function(
+                    TypeExpression::Var(tail_index),
+                    TypeExpression::Var(my_var_index));
                 solver.add_rule(head_index, fn_type);
                 Ok(Expression::<VariableType>::new(
                     Application(annotated_a, annotated_b),
@@ -350,18 +350,18 @@ impl<> Lambda<OptionalType> {
 
 impl<> Lambda<FixedType> {
     fn get_overall_type(&self) -> TypeExpression {
-        TypeExpression::Function(
-            Box::new(TypeExpression::clone(&self.param.t.0)),
-            Box::new(TypeExpression::clone(&self.return_type.0))
+        TypeExpression::new_function(
+            TypeExpression::clone(&self.param.t.0),
+            TypeExpression::clone(&self.return_type.0)
         )
     }
 }
 
 impl<> Lambda<VariableType> {
     fn get_overall_type(&self) -> TypeExpression {
-        TypeExpression::Function(
-            Box::new(TypeExpression::Var(self.param.t.0)),
-            Box::new(TypeExpression::Var(self.return_type.0))
+        TypeExpression::new_function(
+            TypeExpression::Var(self.param.t.0),
+            TypeExpression::Var(self.return_type.0)
         )
     }
 }

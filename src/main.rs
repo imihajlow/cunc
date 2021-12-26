@@ -24,17 +24,17 @@ fn create_default_context() -> TypeContext<'static, TypeAssignment> {
     let mut context: TypeContext<TypeAssignment> = TypeContext::new();
     context.set("sum", &TypeAssignment::ToplevelFunction(
         TypeVars::new(1, vec![TypeConstraint::new_num(&TypeExpression::Var(0), &Position::Builtin)]),
-        TypeExpression::Function(
-            Box::new(TypeExpression::Var(0)),
-            Box::new(TypeExpression::Function(
-                Box::new(TypeExpression::Var(0)),
-                Box::new(TypeExpression::Var(0))))))).unwrap();
+        TypeExpression::new_function(
+            TypeExpression::Var(0),
+            TypeExpression::new_function(
+                TypeExpression::Var(0),
+                TypeExpression::Var(0))))).unwrap();
     
     context.set("convert", &TypeAssignment::ToplevelFunction(
         TypeVars::new(2, vec![TypeConstraint::new_num(&TypeExpression::Var(0), &Position::Builtin), TypeConstraint::new_num(&TypeExpression::Var(1), &Position::Builtin)]),
-        TypeExpression::Function(
-            Box::new(TypeExpression::Var(0)),
-            Box::new(TypeExpression::Var(1))))).unwrap();
+        TypeExpression::new_function(
+            TypeExpression::Var(0),
+            TypeExpression::Var(1)))).unwrap();
     context
 }
 

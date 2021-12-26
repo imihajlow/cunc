@@ -144,13 +144,14 @@ fn build_lambda(mut param_idents: Pairs<Rule>,
             let param_name = p.as_str().to_string();
             // It's at least a function with one argument.
             // If a type is specified, it must be a function type.
-            let (param_type, rest_types) = match types {
-                Some(TypeExpression::Function(a, b)) =>
-                    (Some(*a), Some(*b)),
-                Some(_) =>
-                    return Err(Error::new(ErrorCause::TooManyArguments, param_pos)),
-                None =>
-                    (None, None)
+            let (param_type, rest_types) = if let Some(t) = types {
+                if let Some((a, b)) = t.match_function() {
+                    (Some(TypeExpression::clone(a)), Some(TypeExpression::clone(b)))
+                } else {
+                    return Err(Error::new(ErrorCause::TooManyArguments, param_pos))
+                }                    
+            } else {
+                (None, None)
             };
             let binding: Binding<OptionalType> =
                 Binding::new(param_name, OptionalType(param_type), Position::clone(&param_pos));
@@ -270,7 +271,7 @@ fn build_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
             };
             Ok(match tail {
                 None => head,
-                Some(t) => TypeExpression::Function(Box::new(head), Box::new(t))
+                Some(t) => TypeExpression::new_function(head, t)
             })
         }
         Rule::type_spec => {
