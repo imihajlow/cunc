@@ -1,19 +1,18 @@
+use crate::error::Mismatchable;
 use crate::util::max_options;
 use crate::position::Position;
 use crate::error::Error;
 use crate::error::ErrorCause;
-use crate::type_constraint::TypeConstraint;
 use crate::type_var_allocator::TypeVarAllocator;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
-use crate::type_info::TypeExpression;
+use crate::type_info::{TypeExpression, TypeLikeExpression};
 use crate::util::var_from_number;
-use itertools::Itertools;
 
-pub struct Solver {
-    rules: Vec<Vec<TypeExpression>>,
-    constraints: Vec<TypeConstraint>
+
+pub struct Solver<AT> {
+    rules: Vec<Vec<TypeLikeExpression<AT>>>,
 }
 
 #[derive(Debug)]
@@ -33,26 +32,22 @@ impl SolveError {
     }
 }
 
-impl Solver {
+impl<AT: Clone + PartialEq> Solver<AT>
+where TypeLikeExpression<AT>: Mismatchable, AT: fmt::Display, TypeLikeExpression<AT>: fmt::Display {
     pub fn new() -> Self {
         Self {
             rules: Vec::new(),
-            constraints: Vec::new(),
         }
     }
 
-    pub fn add_rule(&mut self, var_index: usize, t: TypeExpression) {
+    pub fn add_rule(&mut self, var_index: usize, t: TypeLikeExpression<AT>) {
         if self.rules.len() <= var_index {
             self.rules.resize(var_index + 1, Vec::new());
         }
         self.rules[var_index].push(t);
     }
 
-    pub fn add_constraint(&mut self, c: TypeConstraint) {
-        self.constraints.push(c);
-    }
-
-    pub fn solve(mut self) -> Result<Solution, SolveError> {
+    pub fn solve(mut self) -> Result<Solution<AT>, SolveError> {
         assert!(self.rules.len() > 0);
         let mut to_process: Vec<usize> = (0..self.rules.len()).collect();
         // println!("Type solver\n========");
@@ -65,10 +60,12 @@ impl Solver {
                 // removing all original rules but one.
                 let current_rules = &mut self.rules[current_var];
                 let rest = current_rules.split_off(1);
-                let pivot_rule = TypeExpression::clone(current_rules.first().unwrap());
-                let mut new_rules: Vec<(usize, TypeExpression)> = Vec::new();
+                let pivot_rule = TypeLikeExpression::clone(current_rules.first().unwrap());
+                let mut new_rules: Vec<(usize, TypeLikeExpression<AT>)> = Vec::new();
                 for rule in rest.into_iter() {
-                    new_rules.extend(match_rules(&pivot_rule, &rule).map_err(|e| SolveError::RuleError(current_var, e))?);
+                    let matched_rules = match_rules(&pivot_rule, &rule)
+                        .map_err(|e| SolveError::RuleError(current_var, e))?;
+                    new_rules.extend(matched_rules);
                 }
 
                 // Substitute all occurences of the variable with its only rule
@@ -77,10 +74,6 @@ impl Solver {
                         rule.substitute(current_var, &pivot_rule)
                     }
                 }
-                for c in self.constraints.iter_mut() {
-                    c.substitute(current_var, &pivot_rule);
-                }
-
 
                 // If there were new rules, mark corresponding variables for processing
                 let mut affected_vars: HashSet<usize> = HashSet::new();
@@ -100,9 +93,6 @@ impl Solver {
                     max_var_index = max_options(max_var_index, rule.get_max_var_index())
                 }
             }
-            for constraint in self.constraints.iter() {
-                max_var_index = max_options(max_var_index, constraint.get_max_var_index());
-            }
             max_var_index.unwrap()
         };
         let mut free_vars: HashSet<usize> = HashSet::new();
@@ -120,9 +110,9 @@ impl Solver {
             free_var_mapping.insert(n, i);
         }
 
-        let mut solution_rules: Vec<TypeExpression> = Vec::new();
+        let mut solution_rules: Vec<TypeLikeExpression<AT>> = Vec::new();
         for i in 0..=max_var_index {
-            use TypeExpression::*;
+            use TypeLikeExpression::*;
             if i >= self.rules.len() || self.rules[i].is_empty() {
                 solution_rules.push(Var(free_var_mapping[&i]));
             } else {
@@ -131,30 +121,14 @@ impl Solver {
                 solution_rules.push(rule.rename_vars(&free_var_mapping));
             }
         }
-        let mut checked_constraints: Vec<TypeConstraint> = Vec::new();
-        for c in self.constraints.into_iter() {
-            if let Some(c) = c.check().map_err(|e| SolveError::ConstraintError(e))? {
-                checked_constraints.push(c);
-            }
-        }
-        let merged_constraints =
-            TypeConstraint::merge(checked_constraints).map_err(|e| SolveError::ConstraintError(e))?;
-        let renamed_constraints =
-            merged_constraints.into_iter().map(|c| c.rename_vars(&free_var_mapping)).collect();
 
-
-        Ok(Solution::new(solution_rules, renamed_constraints, free_var_mapping.len()))
+        Ok(Solution::new(solution_rules, free_var_mapping.len()))
     }
 }
 
-impl fmt::Display for Solver {
+impl<AT: fmt::Display> fmt::Display for Solver<AT>
+where TypeLikeExpression<AT>: std::fmt::Display {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !self.constraints.is_empty() {
-            for c in self.constraints.iter() {
-                writeln!(f, "{}", c)?;
-            }
-            writeln!(f, "=>")?;
-        }
         for (v, rules) in self.rules.iter().enumerate() {
             for t in rules.iter() {
                 writeln!(f, "{} = {}", var_from_number(v), t)?;
@@ -166,30 +140,32 @@ impl fmt::Display for Solver {
 }
 
 /// Match two type expressions and produce new type rules resulting from their equality.
-fn match_rules(pivot: &TypeExpression, other: &TypeExpression) -> Result<Vec<(usize, TypeExpression)>, ErrorCause> {
-    use TypeExpression::*;
+fn match_rules<AT: PartialEq + Clone>(pivot: &TypeLikeExpression<AT>, other: &TypeLikeExpression<AT>)
+        -> Result<Vec<(usize, TypeLikeExpression<AT>)>, ErrorCause>
+    where TypeLikeExpression<AT>: Mismatchable {
+    use TypeLikeExpression::*;
     match (pivot, other) {
         (Var(n), Var(m)) if n == m => {
             Ok(Vec::new())
         }
         (Var(n), t) => {
-            Ok(vec![(*n, TypeExpression::clone(t))])
+            Ok(vec![(*n, TypeLikeExpression::clone(&t))])
         }
         (t, Var(n)) => {
-            Ok(vec![(*n, TypeExpression::clone(t))])
+            Ok(vec![(*n, TypeLikeExpression::clone(&t))])
         }
         (Atomic(a), Atomic(b)) => {
             if a == b {
                 Ok(Vec::new())
             } else {
-                Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
+                Err(pivot.new_types_mismatch_error(other))
             }
         }
         (Atomic(_), Composite(_, _)) => {
-            Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
+            Err(pivot.new_types_mismatch_error(other))
         }
         (Composite(_, _), Atomic(_)) => {
-            Err(ErrorCause::TypesMismatch(TypeExpression::clone(pivot), TypeExpression::clone(other)))
+            Err(pivot.new_types_mismatch_error(other))
         }
         (Composite(h1, t1), Composite(h2, t2)) => {
             let mut result = match_rules(h1, h2)?;
@@ -199,26 +175,24 @@ fn match_rules(pivot: &TypeExpression, other: &TypeExpression) -> Result<Vec<(us
     }
 }
 
-pub struct Solution {
-    rules: Vec<TypeExpression>,
-    constraints: Vec<TypeConstraint>,
+pub struct Solution<AT> {
+    rules: Vec<TypeLikeExpression<AT>>,
     free_vars_count: usize,
 }
 
-impl Solution {
-    fn new(rules: Vec<TypeExpression>, constraints: Vec<TypeConstraint>, free_vars_count: usize) -> Self {
+impl<AT: Clone> Solution<AT> {
+    fn new(rules: Vec<TypeLikeExpression<AT>>, free_vars_count: usize) -> Self {
         Self {
             rules,
-            constraints,
             free_vars_count
         }
     }
 
-    pub fn translate_type(&self, t: TypeExpression) -> TypeExpression {
-        use TypeExpression::*;
+    pub fn translate_type(&self, t: TypeLikeExpression<AT>) -> TypeLikeExpression<AT> {
+        use TypeLikeExpression::*;
         match t {
             Atomic(_) => t,
-            Var(n) => TypeExpression::clone(&self.rules[n]),
+            Var(n) => TypeLikeExpression::clone(&self.rules[n]),
             Composite(h, t) =>
                 Composite(
                     Box::new(self.translate_type(*h)),
@@ -226,27 +200,18 @@ impl Solution {
         }
     }
 
-    pub fn translate_var_index(&self, index: usize) -> TypeExpression {
-        TypeExpression::clone(&self.rules[index])
+    pub fn translate_var_index(&self, index: usize) -> TypeLikeExpression<AT> {
+        TypeLikeExpression::clone(&self.rules[index])
     }
 
     pub fn get_free_vars_count(&self) -> usize {
         self.free_vars_count
     }
-
-    pub fn clone_type_constraints(&self) -> Vec<TypeConstraint> {
-        self.constraints.to_owned()
-    }
 }
 
-impl fmt::Display for Solution {
+impl<AT: fmt::Display> fmt::Display for Solution<AT>
+where TypeLikeExpression<AT>: fmt::Display {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !self.constraints.is_empty() {
-            for s in self.constraints.iter().map(|c| format!("{}", c)).intersperse(", ".to_string()) {
-                f.write_str(&s)?;
-            }
-            f.write_str(" =>\n")?;
-        }
         for (v, rule) in self.rules.iter().enumerate() {
             writeln!(f, "{} = {}", var_from_number(v), rule)?;
         }
@@ -264,20 +229,20 @@ mod tests {
     fn test_match_rules() {
         // atomic vs atomic
         {
-            let a = TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8)));
-            let b = TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8)));
+            let a = TypeLikeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8)));
+            let b = TypeLikeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8)));
             assert!(match_rules(&a, &b).is_ok());
         }
         {
-            let a = TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B16)));
-            let b = TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8)));
+            let a = TypeLikeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B16)));
+            let b = TypeLikeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8)));
             assert!(match_rules(&a, &b).is_err());
         }
     }
 
     #[test]
     fn test_solve_free_vars() {
-        let mut solver = Solver::new();
+        let mut solver: Solver<AtomicType> = Solver::new();
         /*
         sum :: x -> x -> x
 
@@ -286,7 +251,7 @@ mod tests {
             sum[f] x[e] c[d] -> g
         */
         
-        use TypeExpression::*;
+        use TypeLikeExpression::*;
         // 0 = 1 -> 2 -> 3 -> 7
         solver.add_rule(0, TypeExpression::new_function(
             Var(1),
@@ -326,7 +291,7 @@ mod tests {
 
     #[test]
     fn test_solve_no_free_vars() {
-        let mut solver = Solver::new();
+        let mut solver: Solver<AtomicType> = Solver::new();
         /*
         sum :: U8 -> U8 -> U8
 
@@ -335,7 +300,7 @@ mod tests {
             sum[f] x[e] c[d] -> g
         */
         use crate::type_info;
-        use TypeExpression::*;
+        use TypeLikeExpression::*;
         // 0 = 1 -> 2 -> 3 -> 7
         solver.add_rule(0, TypeExpression::new_function(
             Var(1),

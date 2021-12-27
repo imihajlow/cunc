@@ -1,12 +1,11 @@
+use crate::ast::Binding;
+use crate::error::ErrorCause;
 use crate::util::max_options;
 use std::collections::HashMap;
 use crate::type_var_allocator::TypeVarAllocator;
 use crate::util::var_from_number;
-use crate::type_constraint::TypeConstraint;
 use std::{str::FromStr};
-
 use std::fmt;
-use itertools::Itertools;
 
 
 #[derive(Debug, Clone)]
@@ -15,9 +14,11 @@ pub struct TypeInfo {
     vars: TypeVars
 }
 
+pub type TypeExpression = TypeLikeExpression<AtomicType>;
+
 #[derive(Debug, Clone, PartialEq)]
-pub enum TypeExpression {
-    Atomic(AtomicType),
+pub enum TypeLikeExpression<AT> {
+    Atomic(AT),
     Var(usize),
     Composite(Box<Self>, Box<Self>),
 }
@@ -25,7 +26,6 @@ pub enum TypeExpression {
 #[derive(Debug, Clone)]
 pub struct TypeVars {
     range: usize,
-    constraints: Vec<TypeConstraint>
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -45,6 +45,7 @@ pub struct IntType {
 pub enum AtomicType {
     Int(IntType),
     Function,
+    Num,
     User(String)
 }
 
@@ -56,10 +57,9 @@ pub enum AtomicTypeParseError {
 }
 
 impl TypeVars {
-    pub fn new(range: usize, constraints: Vec<TypeConstraint>) -> Self {
+    pub fn new(range: usize) -> Self {
         Self {
             range,
-            constraints: constraints,
         }
     }
     pub fn is_empty(&self) -> bool {
@@ -68,10 +68,6 @@ impl TypeVars {
 
     pub fn get_vars_count(&self) -> usize {
         self.range
-    }
-
-    pub fn constraints_iter(&self) -> core::slice::Iter<TypeConstraint> {
-        self.constraints.iter()
     }
 }
 
@@ -92,7 +88,7 @@ impl TypeExpression {
     }
 
     pub fn match_function<'a>(&'a self) -> Option<(&'a Self, &'a Self)> {
-        use TypeExpression::*;
+        use TypeLikeExpression::*;
         if let Composite(a, b) = self {
             if let Composite(c, d) = &**a {
                 if let Atomic(AtomicType::Function) = **c {
@@ -107,12 +103,14 @@ impl TypeExpression {
             None
         }
     }
+}
 
+impl<AT: std::clone::Clone> TypeLikeExpression<AT> {
     /// Remap existing generic variables into local type variables.
-    pub fn remap_vars(&self, allocator: &TypeVarAllocator) -> TypeExpression {
-        use TypeExpression::*;
+    pub fn remap_vars(&self, allocator: &TypeVarAllocator) -> Self {
+        use TypeLikeExpression::*;
         match self {
-            Atomic(_) => TypeExpression::clone(self),
+            Atomic(_) => TypeLikeExpression::clone(&self),
             Var(n) => Var(allocator.map_existing(*n)),
             Composite(a, b) => Composite(
                 Box::new(a.remap_vars(allocator)),
@@ -122,7 +120,7 @@ impl TypeExpression {
 
     /// Rename free variables in a type expression using a mapping (old number -> new number).
     pub fn rename_vars(self, mapping: &HashMap<usize, usize>) -> Self {
-        use TypeExpression::*;
+        use TypeLikeExpression::*;
         match self {
             Atomic(_) => self,
             Var(n) => Var(mapping[&n]),
@@ -133,11 +131,11 @@ impl TypeExpression {
     }
 
     /// Substitute variable with its value in a type expression.
-    pub fn substitute(&mut self, var_index: usize, value: &TypeExpression) {
-        use TypeExpression::*;
+    pub fn substitute(&mut self, var_index: usize, value: &TypeLikeExpression<AT>) {
+        use TypeLikeExpression::*;
         match self {
             Atomic(_) => (),
-            Var(n) if *n == var_index => *self = TypeExpression::clone(value),
+            Var(n) if *n == var_index => *self = TypeLikeExpression::clone(value),
             Var(_) => (),
             Composite(ref mut a, ref mut b) => {
                 a.substitute(var_index, value);
@@ -148,7 +146,7 @@ impl TypeExpression {
 
     /// Returns true if type expression does not contain any variables.
     pub fn is_fixed(&self) -> bool {
-        use TypeExpression::*;
+        use TypeLikeExpression::*;
         match self {
             Atomic(_) => true,
             Var(_) => false,
@@ -158,12 +156,31 @@ impl TypeExpression {
 
     /// Find maximum variable index in a type expression. Returns None if expression contains no variables.
     pub fn get_max_var_index(&self) -> Option<usize> {
-        use TypeExpression::*;
+        use TypeLikeExpression::*;
         match self {
             Var(n) => Some(*n),
             Atomic(_) => None,
             Composite(a, b) =>
                 max_options(a.get_max_var_index(), b.get_max_var_index())
+        }
+    }
+}
+
+impl<> TypeLikeExpression<AtomicType> {
+    pub fn check_constraint(&self) -> Result<(), ErrorCause> {
+        use TypeLikeExpression::*;
+        // TODO kinds
+        match self {
+            Var(_) |
+            Atomic(_) => Err(ErrorCause::NotAConstraint(TypeExpression::clone(self))),
+            Composite(a, b) => match &**a {
+                Atomic(t) if *t == AtomicType::Num => match &**b {
+                    Var(_) => Ok(()),
+                    Atomic(t) if matches!(t, AtomicType::Int(_)) => Ok(()),
+                    _ => Err(ErrorCause::TypeConstraintMismatch),
+                }
+                _ => Err(ErrorCause::NotAConstraint(TypeExpression::clone(self))),
+            }
         }
     }
 }
@@ -183,19 +200,23 @@ impl FromStr for AtomicType {
         if s.len() == 0 {
             Err(AtomicTypeParseError::Empty)
         } else {
-            let (first, last) = s.split_at(1);
-            if first == "S" || first == "U" {
-                let signed = first == "S";
-                let bits = match last.parse::<usize>() {
-                    Ok(8) => IntBits::B8,
-                    Ok(16) => IntBits::B16,
-                    Ok(32) => IntBits::B32,
-                    Ok(_) => return Ok(AtomicType::User(s.to_string())),
-                    _ => return Ok(AtomicType::User(s.to_string()))
-                };
-                Ok(AtomicType::Int(IntType { signed, bits }))
+            if s == "Num" {
+                Ok(AtomicType::Num)
             } else {
-                Ok(AtomicType::User(s.to_string()))
+                let (first, last) = s.split_at(1);
+                if first == "S" || first == "U" {
+                    let signed = first == "S";
+                    let bits = match last.parse::<usize>() {
+                        Ok(8) => IntBits::B8,
+                        Ok(16) => IntBits::B16,
+                        Ok(32) => IntBits::B32,
+                        Ok(_) => return Ok(AtomicType::User(s.to_string())),
+                        _ => return Ok(AtomicType::User(s.to_string()))
+                    };
+                    Ok(AtomicType::Int(IntType { signed, bits }))
+                } else {
+                    Ok(AtomicType::User(s.to_string()))
+                }
             }
         }
     }
@@ -212,24 +233,13 @@ impl fmt::Display for TypeInfo {
 
 impl fmt::Display for TypeVars {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !self.constraints.is_empty() {
-            for s in self.constraints.iter().map(|c| format!("{}", c)).intersperse(", ".to_string()) {
-                f.write_str(&s)?;
-            }
-            f.write_str(" => ")?;
-        }
-        // for s in (0..self.range)
-        //     .map(var_from_number)
-        //     .intersperse(", ".to_string()) {
-        //     f.write_str(&s)?;       
-        // }
         Ok(())
     }
 }
 
 impl fmt::Display for TypeExpression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use TypeExpression::*;
+        use TypeLikeExpression::*;
         match self {
             Atomic(t) => write!(f, "{}", t),
             Var(n) => f.write_str(&var_from_number(*n)),
@@ -253,6 +263,7 @@ impl fmt::Display for AtomicType {
             Int(t) => write!(f, "{}", t),
             Function => write!(f, "(->)"),
             User(s) => f.write_str(s),
+            Num => f.write_str("Num"),
         }
     }
 }

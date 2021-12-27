@@ -38,15 +38,11 @@ fn_param_idents = {
 
 type_spec = {
     ("[" ~ arrow_type ~ "]") |
-    ("[" ~ constraints_decl ~ "=>" ~ arrow_type ~ "]")
+    ("[" ~ context ~ "=>" ~ arrow_type ~ "]")
 }
 
-constraints_decl = {
-    constraint_decl ~ ("," ~ constraint_decl)*
-}
-
-constraint_decl = {
-    uc_ident ~ lc_ident+
+context = {
+    application_type ~ ("," ~ application_type)*
 }
 
 arrow_type = {

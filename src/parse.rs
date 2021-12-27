@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use pest::iterators::Pairs;
 use std::collections::HashMap;
 use crate::position::{position_from_span, position_from_linecol, Position};
-use crate::type_constraint::TypeConstraint;
 use crate::type_info::TypeVars;
 use pest::iterators::Pair;
 use crate::error::Error;
@@ -47,7 +46,6 @@ pub fn parse(fname: &str) -> Result<Module<OptionalType>, Error> {
 #[derive(Debug)]
 struct TypeVarAllocator {
     m: HashMap<String, usize>,
-    constraints: Vec<TypeConstraint>,
     cur_index: usize,
     new_vars_allowed: bool,
 }
@@ -56,7 +54,6 @@ impl TypeVarAllocator {
     fn new() -> Self {
         Self {
             m: HashMap::new(),
-            constraints: Vec::new(),
             cur_index: 0,
             new_vars_allowed: true,
         }
@@ -81,16 +78,12 @@ impl TypeVarAllocator {
         }
     }
 
-    fn add_constraint(&mut self, c: TypeConstraint) {
-        self.constraints.push(c);
-    }
-
     fn into_type_vars(self) -> TypeVars {
-        TypeVars::new(self.cur_index, self.constraints)
+        TypeVars::new(self.cur_index)
     }
 
     fn get_type_vars(&self) -> TypeVars {
-        TypeVars::new(self.cur_index, Vec::clone(&self.constraints))
+        TypeVars::new(self.cur_index)
     }
 
     fn get_arity(&self) -> usize {
@@ -110,7 +103,7 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function<OptionalType>, Error> {
         match p.as_rule() {
             Rule::type_spec =>
                 (
-                    Some(parse_type(p, &mut tva)?),
+                    Some(parse_type_spec(p, &mut tva)?),
                     inner.next().unwrap().as_str(),
                     inner.next().unwrap()
                 ),
@@ -123,11 +116,15 @@ fn parse_function(pair: Pair<Rule>) -> Result<Function<OptionalType>, Error> {
             _ => unreachable!()
         }
     };
+    let (fn_type, context) = match type_spec {
+        Some((t, context)) => (Some(t), context),
+        None => (None, ConstraintContext::new())
+    };
     tva.disallow_new_vars();
     let body_pair = inner.next().unwrap();
     let body_expr = parse_expression(body_pair, &mut tva)?;
-    let body = build_lambda(param_idents.into_inner(), type_spec, body_expr)?;
-    Ok(Function::new(name.to_string(), body, tva.into_type_vars(), pos))
+    let body = build_lambda(param_idents.into_inner(), fn_type, body_expr)?;
+    Ok(Function::new(name.to_string(), context, body, tva.into_type_vars(), pos))
 }
 
 fn substitute_return_type(body: Expression<OptionalType>, rt: Option<TypeExpression>)
@@ -269,6 +266,33 @@ fn parse_bin_constant(pair: Pair<Rule>) -> Result<u64, Error> {
     Ok(u64::from_str_radix(sn, 2).unwrap()) // TODO handle error
 }
 
+fn parse_type_spec(pair: Pair<Rule>, tva: &mut TypeVarAllocator)
+    -> Result<(TypeExpression, ConstraintContext<OptionalType>), Error> {
+    assert_eq!(pair.as_rule(), Rule::type_spec);
+    let mut inner = pair.into_inner();
+    let first = inner.next().unwrap();
+    if let Rule::arrow_type = first.as_rule() {
+        Ok((parse_type(first, tva)?, ConstraintContext::new()))
+    } else {
+        assert_eq!(first.as_rule(), Rule::context);
+        let type_fn = inner.next().unwrap();
+        assert_eq!(type_fn.as_rule(), Rule::arrow_type);
+        Ok((parse_type(type_fn, tva)?, parse_context(first, tva)?))
+    }
+}
+
+fn parse_context(pair: Pair<Rule>, tva: &mut TypeVarAllocator)
+    -> Result<ConstraintContext<OptionalType>, Error> {
+    assert_eq!(pair.as_rule(), Rule::context);
+    let mut result: ConstraintContext<OptionalType> = ConstraintContext::new();
+    for p in pair.into_inner() {
+        let pos = position_from_span(&p.as_span());
+        let t = parse_type(p, tva)?;
+        result.add(OptionalType(Some(t)), &pos);
+    }
+    Ok(result)
+}
+
 fn parse_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpression, Error> {
     match pair.as_rule() {
         Rule::var_type_spec => parse_type(pair.into_inner().next().unwrap(), tva),
@@ -297,19 +321,6 @@ fn parse_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
                         Box::new(acc),
                         Box::new(t)))
         }
-        Rule::type_spec => {
-            let mut inner = pair.into_inner();
-            let first = inner.next().unwrap();
-            if let Rule::arrow_type = first.as_rule() {
-                parse_type(first, tva)
-            } else {
-                assert_eq!(first.as_rule(), Rule::constraints_decl);
-                let type_fn = inner.next().unwrap();
-                assert_eq!(type_fn.as_rule(), Rule::arrow_type);
-                parse_type_constraints(first.into_inner(), tva)?;
-                parse_type(type_fn, tva)
-            }
-        }
         Rule::terminal_type => {
             parse_type(pair.into_inner().next().unwrap(), tva)
         }
@@ -332,36 +343,6 @@ fn parse_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
             unreachable!()
         }
     }
-}
-
-fn parse_type_constraints(inner: Pairs<Rule>, tva: &mut TypeVarAllocator)
-    -> Result<(), Error> {
-    for pair in inner {
-        assert_eq!(pair.as_rule(), Rule::constraint_decl);
-        let pos = position_from_span(&pair.as_span());
-        let mut parts = pair.into_inner();
-        let name_part = parts.next().unwrap();
-        assert_eq!(name_part.as_rule(), Rule::uc_ident);
-        let name_pos = position_from_span(&name_part.as_span());
-        match name_part.as_str() {
-            "Num" => {
-                let var_part = parts.next().unwrap();
-                assert_eq!(var_part.as_rule(), Rule::lc_ident);
-                let var_pos = position_from_span(&var_part.as_span());
-                if let Some(_) = parts.peek() {
-                    let pos = position_from_span(&parts.next().unwrap().as_span());
-                    return Err(Error::new(ErrorCause::TooManyArguments, pos))
-                }
-                let var_index = tva.allocate_type_var(var_part.as_str())
-                    .map_err(|c| Error::new(c, var_pos))?;
-                tva.add_constraint(TypeConstraint::new_num(
-                    &TypeExpression::Var(var_index),
-                    &pos));
-            }
-            _ => return Err(Error::new(ErrorCause::UnknownConstraint(name_part.as_str().to_owned()), name_pos))
-        }
-    }
-    Ok(())
 }
 
 fn parse_type_definition(mut inner: Pairs<Rule>)

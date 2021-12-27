@@ -1,3 +1,4 @@
+use crate::type_info::TypeLikeExpression;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -123,7 +124,7 @@ impl BuiltinTypeConstraint {
     fn check(&self, t: &TypeExpression) -> bool {
         match self {
             Self::Num => {
-                use TypeExpression::*;
+                use TypeLikeExpression::*;
                 match t {
                     Composite(_, _) => false,
                     Var(_) => true,

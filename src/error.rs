@@ -1,4 +1,4 @@
-use crate::type_constraint::TypeConstraint;
+use crate::type_info::AtomicType;
 use crate::type_info::AtomicTypeParseError;
 use crate::type_info::TypeExpression;
 use crate::position::Position;
@@ -20,9 +20,10 @@ pub enum ErrorCause {
     TooManyArguments,
     TypesMismatch(TypeExpression, TypeExpression),
     AtomicTypeParseError(AtomicTypeParseError),
-    TypeConstraintMismatch(TypeConstraint),
-    TypeConstraintsIncompatible(TypeConstraint, TypeConstraint),
+    TypeConstraintMismatch,
+    // TypeConstraintsIncompatible(TypeConstraint, TypeConstraint),
     MultipleTypeSpecification,
+    NotAConstraint(TypeExpression),
 }
 
 impl Error {
@@ -31,6 +32,16 @@ impl Error {
             cause,
             p: position
         }
+    }
+}
+
+pub trait Mismatchable {
+    fn new_types_mismatch_error(&self, other: &Self) -> ErrorCause;
+}
+
+impl Mismatchable for TypeExpression {
+    fn new_types_mismatch_error(&self, other: &Self) -> ErrorCause {
+        ErrorCause::TypesMismatch(TypeExpression::clone(self), TypeExpression::clone(other))
     }
 }
 
@@ -46,9 +57,10 @@ impl fmt::Display for ErrorCause {
             TooManyArguments => f.write_str("too many arguments"),
             TypesMismatch(t1, t2) => write!(f, "cannot match `{}' against `{}'", t1, t2),
             AtomicTypeParseError(e) => write!(f, "{}", e),
-            TypeConstraintMismatch(c) => write!(f, "cannot match type constraint: {}", c),
-            TypeConstraintsIncompatible(c1, c2) => write!(f, "incompatible type constraints: `{}' and `{}'", c1, c2),
+            TypeConstraintMismatch => write!(f, "cannot match type constraint"),
+            // TypeConstraintsIncompatible(c1, c2) => write!(f, "incompatible type constraints: `{}' and `{}'", c1, c2),
             MultipleTypeSpecification => write!(f, "type is specified multiple times"),
+            NotAConstraint(t) => write!(f, "`{}' is not a constraint", t),
         }
     }
 }
