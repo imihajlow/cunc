@@ -10,3 +10,12 @@ bar = id 5.
 
 [U32]
 baz = bar.
+
+[Num a => b -> U32]
+iop x = 5.
+
+
+data Maybe a = Just a | Nothing.
+
+[a -> Maybe]
+wrong x = x.

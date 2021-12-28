@@ -124,7 +124,7 @@ impl BuiltinTypeConstraint {
     fn check(&self, t: &TypeExpression) -> bool {
         match self {
             Self::Num => {
-                use TypeLikeExpression::*;
+                use CompositeExpression::*;
                 match t {
                     Composite(_, _) => false,
                     Var(_) => true,

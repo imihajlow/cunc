@@ -1,4 +1,3 @@
-use crate::ast::Binding;
 use crate::error::ErrorCause;
 use crate::util::max_options;
 use std::collections::HashMap;
@@ -7,19 +6,12 @@ use crate::util::var_from_number;
 use std::{str::FromStr};
 use std::fmt;
 
-
-#[derive(Debug, Clone)]
-pub struct TypeInfo {
-    expr: TypeExpression,
-    vars: TypeVars
-}
-
-pub type TypeExpression = TypeLikeExpression<AtomicType>;
+pub type TypeExpression = CompositeExpression<AtomicType, ()>;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TypeLikeExpression<AT> {
+pub enum CompositeExpression<AT, Kind> {
     Atomic(AT),
-    Var(usize),
+    Var(usize, Kind),
     Composite(Box<Self>, Box<Self>),
 }
 
@@ -88,7 +80,7 @@ impl TypeExpression {
     }
 
     pub fn match_function<'a>(&'a self) -> Option<(&'a Self, &'a Self)> {
-        use TypeLikeExpression::*;
+        use CompositeExpression::*;
         if let Composite(a, b) = self {
             if let Composite(c, d) = &**a {
                 if let Atomic(AtomicType::Function) = **c {
@@ -105,13 +97,13 @@ impl TypeExpression {
     }
 }
 
-impl<AT: std::clone::Clone> TypeLikeExpression<AT> {
+impl<AT: Clone, Kind: Clone> CompositeExpression<AT, Kind> {
     /// Remap existing generic variables into local type variables.
     pub fn remap_vars(&self, allocator: &TypeVarAllocator) -> Self {
-        use TypeLikeExpression::*;
+        use CompositeExpression::*;
         match self {
-            Atomic(_) => TypeLikeExpression::clone(&self),
-            Var(n) => Var(allocator.map_existing(*n)),
+            Atomic(_) => CompositeExpression::clone(&self),
+            Var(n, k) => Var(allocator.map_existing(*n), Kind::clone(k)),
             Composite(a, b) => Composite(
                 Box::new(a.remap_vars(allocator)),
                 Box::new(b.remap_vars(allocator)))
@@ -120,10 +112,10 @@ impl<AT: std::clone::Clone> TypeLikeExpression<AT> {
 
     /// Rename free variables in a type expression using a mapping (old number -> new number).
     pub fn rename_vars(self, mapping: &HashMap<usize, usize>) -> Self {
-        use TypeLikeExpression::*;
+        use CompositeExpression::*;
         match self {
             Atomic(_) => self,
-            Var(n) => Var(mapping[&n]),
+            Var(n, k) => Var(mapping[&n], k),
             Composite(a, b) => Composite(
                 Box::new(a.rename_vars(mapping)),
                 Box::new(b.rename_vars(mapping)))
@@ -131,12 +123,12 @@ impl<AT: std::clone::Clone> TypeLikeExpression<AT> {
     }
 
     /// Substitute variable with its value in a type expression.
-    pub fn substitute(&mut self, var_index: usize, value: &TypeLikeExpression<AT>) {
-        use TypeLikeExpression::*;
+    pub fn substitute(&mut self, var_index: usize, value: &CompositeExpression<AT, Kind>) {
+        use CompositeExpression::*;
         match self {
             Atomic(_) => (),
-            Var(n) if *n == var_index => *self = TypeLikeExpression::clone(value),
-            Var(_) => (),
+            Var(n, k) if *n == var_index => *self = CompositeExpression::clone(value),
+            Var(_, _) => (),
             Composite(ref mut a, ref mut b) => {
                 a.substitute(var_index, value);
                 b.substitute(var_index, value);
@@ -146,19 +138,19 @@ impl<AT: std::clone::Clone> TypeLikeExpression<AT> {
 
     /// Returns true if type expression does not contain any variables.
     pub fn is_fixed(&self) -> bool {
-        use TypeLikeExpression::*;
+        use CompositeExpression::*;
         match self {
             Atomic(_) => true,
-            Var(_) => false,
+            Var(_, _) => false,
             Composite(a, b) => a.is_fixed() && b.is_fixed()
         }
     }
 
     /// Find maximum variable index in a type expression. Returns None if expression contains no variables.
     pub fn get_max_var_index(&self) -> Option<usize> {
-        use TypeLikeExpression::*;
+        use CompositeExpression::*;
         match self {
-            Var(n) => Some(*n),
+            Var(n, _) => Some(*n),
             Atomic(_) => None,
             Composite(a, b) =>
                 max_options(a.get_max_var_index(), b.get_max_var_index())
@@ -166,16 +158,16 @@ impl<AT: std::clone::Clone> TypeLikeExpression<AT> {
     }
 }
 
-impl<> TypeLikeExpression<AtomicType> {
+impl<> CompositeExpression<AtomicType, ()> {
     pub fn check_constraint(&self) -> Result<(), ErrorCause> {
-        use TypeLikeExpression::*;
+        use CompositeExpression::*;
         // TODO kinds
         match self {
-            Var(_) |
+            Var(_, _) |
             Atomic(_) => Err(ErrorCause::NotAConstraint(TypeExpression::clone(self))),
             Composite(a, b) => match &**a {
                 Atomic(t) if *t == AtomicType::Num => match &**b {
-                    Var(_) => Ok(()),
+                    Var(_, _) => Ok(()),
                     Atomic(t) if matches!(t, AtomicType::Int(_)) => Ok(()),
                     _ => Err(ErrorCause::TypeConstraintMismatch),
                 }
@@ -222,15 +214,6 @@ impl FromStr for AtomicType {
     }
 }
 
-impl fmt::Display for TypeInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if !self.vars.is_empty() {
-            write!(f, "{} => ", self.vars)?;
-        }
-        write!(f, "{}", self.expr)
-    }
-}
-
 impl fmt::Display for TypeVars {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Ok(())
@@ -239,14 +222,14 @@ impl fmt::Display for TypeVars {
 
 impl fmt::Display for TypeExpression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use TypeLikeExpression::*;
+        use CompositeExpression::*;
         match self {
             Atomic(t) => write!(f, "{}", t),
-            Var(n) => f.write_str(&var_from_number(*n)),
+            Var(n, _) => f.write_str(&var_from_number(*n)),
             Composite(a, b) => {
                 match **a {
                     Atomic(AtomicType::Function) => match **b {
-                        Atomic(_) | Var(_) => write!(f, "{} ->", b),
+                        Atomic(_) | Var(_, _) => write!(f, "{} ->", b),
                         Composite(_, _) => write!(f, "({}) ->", b),
                     }
                     _ => write!(f, "{} {}", a, b)

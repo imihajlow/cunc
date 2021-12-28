@@ -298,8 +298,8 @@ impl<> Expression<OptionalType> {
                 let head_index = annotated_a.t.0;
                 let tail_index = annotated_b.t.0;
                 let fn_type = TypeExpression::new_function(
-                    TypeExpression::Var(tail_index),
-                    TypeExpression::Var(my_var_index));
+                    TypeExpression::Var(tail_index, ()),
+                    TypeExpression::Var(my_var_index, ()));
                 solver.add_rule(head_index, fn_type);
                 Ok(Expression::<VariableType>::new(
                     Application(annotated_a, annotated_b),
@@ -309,7 +309,7 @@ impl<> Expression<OptionalType> {
             IntConstant(x) => {
                 let num_constraint = TypeExpression::Composite(
                     Box::new(TypeExpression::Atomic(AtomicType::Num)),
-                    Box::new(TypeExpression::Var(my_var_index)),
+                    Box::new(TypeExpression::Var(my_var_index, ())),
                     );
                 let constraint_index = allocator.allocate(&my_position);
                 solver.add_rule(constraint_index, num_constraint);
@@ -325,7 +325,7 @@ impl<> Expression<OptionalType> {
                     Some(a) => {
                         match a {
                             TypeAssignment::LocalName(var_index) =>
-                                solver.add_rule(my_var_index, TypeExpression::Var(*var_index)),
+                                solver.add_rule(my_var_index, TypeExpression::Var(*var_index, ())),
                             TypeAssignment::ToplevelFunction(tv, te, cc) => {
                                 // Generic function. Remap generic variables.
                                 allocator.enter_function(tv.get_vars_count(), &self.p);
@@ -366,8 +366,8 @@ impl<> Expression<OptionalType> {
                 if let Some(t) = &binding.t.0 {
                     solver.add_rule(var_index, t.remap_vars(allocator));
                 }
-                solver.add_rule(my_var_index, TypeExpression::Var(annotated_body.t.0));
-                solver.add_rule(var_index, TypeExpression::Var(annotated_val.t.0));
+                solver.add_rule(my_var_index, TypeExpression::Var(annotated_body.t.0, ()));
+                solver.add_rule(var_index, TypeExpression::Var(annotated_val.t.0, ()));
                 
                 Ok(Expression::<VariableType>::new(
                     Let(annotated_binding, Box::new(annotated_val), Box::new(annotated_body)),
@@ -405,7 +405,7 @@ impl<> Lambda<OptionalType> {
         // Annotate tail
         let new_tail = self.tail.assign_type_vars(&mut local_context, solver, allocator, constraint_context)?;
         // Add rule matching return type with tail type
-        solver.add_rule(return_type_index, TypeExpression::Var(new_tail.t.0));
+        solver.add_rule(return_type_index, TypeExpression::Var(new_tail.t.0, ()));
 
         Ok(Lambda::new(new_param_binding, VariableType(return_type_index),
             new_tail, Position::clone(&self.p)))
@@ -425,7 +425,7 @@ impl<> Function<OptionalType> {
         let mut constraint_context = self.context.assign_type_vars(solver, allocator)?;
         let body =
             self.body.assign_type_vars(&function_context, solver, allocator, &mut constraint_context)?;
-        solver.add_rule(my_index, TypeExpression::Var(body.t.0));
+        solver.add_rule(my_index, TypeExpression::Var(body.t.0, ()));
         allocator.leave_function();
         Ok(
             Function::new(
@@ -481,8 +481,8 @@ impl<> Lambda<FixedType> {
 impl<> Lambda<VariableType> {
     fn get_overall_type(&self) -> TypeExpression {
         TypeExpression::new_function(
-            TypeExpression::Var(self.param.t.0),
-            TypeExpression::Var(self.return_type.0)
+            TypeExpression::Var(self.param.t.0, ()),
+            TypeExpression::Var(self.return_type.0, ())
         )
     }
 }
