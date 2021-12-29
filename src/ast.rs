@@ -1,6 +1,9 @@
 
 use crate::error::ErrorCause;
+use crate::type_info::AtomicKind;
 use crate::type_info::AtomicType;
+use crate::type_info::KindExpression;
+use crate::type_info::TypeKindExpression;
 use crate::type_solver::Solution;
 use crate::util::var_from_number;
 use std::collections::HashMap;
@@ -12,6 +15,7 @@ use std::collections::HashSet;
 use crate::graph::ObjectGraph;
 use crate::name_context::NameContext;
 use std::fmt;
+use std::iter;
 use itertools::Itertools;
 use crate::position::Position;
 use crate::type_info::TypeExpression;
@@ -90,7 +94,8 @@ pub struct ConstraintContext<Type> {
 #[derive(Debug, Clone)]
 pub struct TypeConstructor {
     name: String,
-    t: TypeExpression,
+    params: Vec<TypeExpression>,
+    parent_type: TypeExpression,
     type_vars: TypeVars,
     p: Position,
 }
@@ -121,13 +126,25 @@ impl<Type> Module<Type> {
 }
 
 impl TypeConstructor {
-    pub fn new(name: String, t: TypeExpression, type_vars: TypeVars, p: Position) -> Self {
+    pub fn new(
+            name: String,
+            params: Vec<TypeExpression>,
+            parent_type: TypeExpression,
+            type_vars: TypeVars,
+            p: Position) -> Self {
         Self {
             name,
-            t,
+            params,
+            parent_type,
             type_vars,
             p
         }
+    }
+
+    pub fn get_function_type(&self) -> (TypeVars, TypeExpression) {
+        let mut parts = Vec::clone(&self.params);
+        parts.push(TypeExpression::clone(&self.parent_type));
+        (TypeVars::clone(&self.type_vars), TypeExpression::new_function_from_vec(parts))
     }
 }
 
@@ -143,6 +160,7 @@ impl SumType {
 }
 
 impl<Type> Module<Type> {
+    /// Build a graph of dependencies between functions.
     pub fn build_dependency_graph(&self) -> ObjectGraph<String> {
         let mut context = NameContext::new();
         for function in self.functions.iter() {
@@ -158,6 +176,39 @@ impl<Type> Module<Type> {
             }
         }
         result
+    }
+
+    /// Build a graph of dependencies between custom types
+    pub fn build_types_top_order(&self) -> Result<Vec<SumType>, Error> {
+        let mut context = NameContext::new();
+        let mut type_by_name: HashMap<String, &SumType> = HashMap::new();
+        for t in self.types.iter() {
+            context.add_name(&t.name);
+            type_by_name.insert(t.name.to_owned(), t);
+        }
+        let mut dep_graph: ObjectGraph<String> = ObjectGraph::new();
+        for t in self.types.iter() {
+            let from = &t.name;
+            for c in t.constructors.iter() {
+                let mut refs: HashSet<String> = HashSet::new();
+                for param in c.params.iter() {
+                    param.collect_refs(&mut refs);
+                }
+                dep_graph.add_node_unique(from);
+                for to in refs.into_iter() {
+                    dep_graph.add_edge_unique(from, &to);
+                }
+            }
+        }
+        let toporder = dep_graph.inverse_topsort()
+            .map_err(|s| {
+                let t = type_by_name[&s];
+                Error::new(ErrorCause::RecursiveType(s), Position::clone(&t.p))
+            })?;
+        Ok(toporder
+            .into_iter()
+            .map(|s| SumType::clone(type_by_name[&s]))
+            .collect())
     }
 }
 
@@ -188,10 +239,11 @@ impl<> Module<OptionalType> {
         // Add type constructors into context
         for t in self.types.iter() {
             for c in t.constructors.iter() {
+                let (tv, t) = c.get_function_type();
                 context.set(&c.name,
                     &TypeAssignment::ToplevelFunction(
-                        TypeVars::clone(&c.type_vars),
-                        TypeExpression::clone(&c.t),
+                        tv,
+                        t,
                         ConstraintContext::new()))
                 .map_err(|cause| Error::new(cause, Position::clone(&c.p)))?;
             }
@@ -230,7 +282,46 @@ impl<> Module<OptionalType> {
                 result.push_function(deduced_fn);
             }
         }
+        // copy custom types
+        for t in self.types.iter() {
+            result.push_type(SumType::clone(t));
+        }
         Ok(result)
+    }
+}
+
+impl<> Module<FixedType> {
+    pub fn check_kinds(&self) -> Result<(), Error> {
+        let toporder = self.build_types_top_order()?;
+        let mut context: TypeContext<KindExpression> = TypeContext::new();
+        for t in toporder.into_iter() {
+            let mut solver: Solver<AtomicKind> = Solver::new();
+            let mut tva = TypeVarAllocator::new();
+            tva.enter_function(t.arity, &t.p);
+            for c in t.constructors.iter() {
+                for param in c.params.iter() {
+                    let index = param.create_kind_rules(&mut tva, &context, &mut solver)
+                        .map_err(|cause| Error::new(cause, Position::clone(&c.p)))?;
+                    solver.add_rule(index, KindExpression::Atomic(AtomicKind::Type));
+                }
+            }
+            let solution = solver.solve()
+                .map_err(|e| e.as_error(&tva).with_position(Position::clone(&t.p)))?;
+            let mut kind = (0..t.arity)
+                .map(|i| solution.translate_var_index(i))
+                .chain(iter::once(KindExpression::Atomic(AtomicKind::Type)))
+                .reduce(|acc, b| KindExpression::Composite(Box::new(acc), Box::new(b)))
+                .unwrap();
+            // Assuming any remaining free var correspond to types.
+            kind.substitute_free_vars(&KindExpression::Atomic(AtomicKind::Type));
+            println!("{} :: {}", &t.name, &kind);
+            context.set(&t.name, &kind)
+                .map_err(|c| Error::new(c, t.p))?;
+        }
+        for f in self.functions.iter() {
+            f.check_kinds(&context)?;
+        }
+        Ok(())
     }
 }
 
@@ -549,6 +640,91 @@ impl<> ConstraintContext<VariableType> {
 }
 // end translate_types
 
+// check_kinds
+fn check_kinds_eq(a: KindExpression, b: KindExpression, p: &Position)
+        -> Result<(), Error> {
+    if a != b {
+        Err(Error::new(ErrorCause::KindsMismatch(a, b),
+            Position::clone(&p)))
+    } else {
+        Ok(())
+    }   
+}
+
+fn check_kind_of_type(t: &TypeExpression, context: &TypeContext<KindExpression>, p: &Position)
+        -> Result<(), Error> {
+    let my_kind = t.get_kind(context)
+        .map_err(|c| Error::new(c, Position::clone(p)))?;
+    check_kinds_eq(my_kind, KindExpression::TYPE, p)
+}
+
+impl<> Function<FixedType> {
+    fn check_kinds(&self, context: &TypeContext<KindExpression>)
+            -> Result<(), Error> {
+        self.body.check_kinds(context)?;
+        self.context.check_kinds(context)
+    }
+}
+
+impl<> Expression<FixedType> {
+    fn check_kinds(&self, context: &TypeContext<KindExpression>)
+            -> Result<(), Error> {
+        check_kind_of_type(&self.t.0, context, &self.p)?;
+        self.e.check_kinds(context)
+    }
+}
+
+impl<> ExpressionVariant<FixedType> {
+    fn check_kinds(&self, context: &TypeContext<KindExpression>)
+            -> Result<(), Error> {
+        use ExpressionVariant::*;
+        match self {
+            IntConstant(_) |
+            Variable(_) => Ok(()),
+            Application(a, b) => {
+                a.check_kinds(context)?;
+                b.check_kinds(context)
+            }
+            Abstraction(l) => l.check_kinds(context),
+            Let(binding, value, body) => {
+                binding.check_kinds(context)?;
+                value.check_kinds(context)?;
+                body.check_kinds(context)
+            }
+        }
+    }
+}
+
+impl<> Lambda<FixedType> {
+    fn check_kinds(&self, context: &TypeContext<KindExpression>)
+            -> Result<(), Error> {
+        self.param.check_kinds(context)?;
+        check_kind_of_type(&self.return_type.0, context, &self.p)?;
+        self.tail.check_kinds(context)
+    }
+}
+
+impl<> Binding<FixedType> {
+    fn check_kinds(&self, context: &TypeContext<KindExpression>)
+            -> Result<(), Error> {
+        check_kind_of_type(&self.t.0, context, &self.p)
+    }
+}
+impl<> ConstraintContext<FixedType> {
+    fn check_kinds(&self, context: &TypeContext<KindExpression>)
+            -> Result<(), Error> {
+        for (t, p) in self.c.iter() {
+            // println!("{}", t.0);
+            let kind = t.0.get_kind(context)
+                .map_err(|c| Error::new(c, Position::clone(p)))?;
+            // println!("{} :: {}", t.0, kind);
+            check_kinds_eq(kind, KindExpression::CONSTRAINT, p)?;
+        }
+        Ok(())
+    }
+}
+// end check_kinds
+
 impl<> Expression<FixedType> {
     pub fn new(e: ExpressionVariant<FixedType>, p: Position, t: TypeExpression) -> Self {
         Self {
@@ -727,7 +903,11 @@ where Expression<Type>: fmt::Display {
 
 impl fmt::Display for TypeConstructor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} :: {}{}", self.name, self.type_vars, self.t)
+        write!(f, "{}", self.name)?;
+        for param in self.params.iter() {
+            write!(f, " {}", param)?;
+        }
+        Ok(())
     }
 }
 

@@ -13,12 +13,12 @@ use crate::util::var_from_number;
 
 pub struct Solver<AT> {
     rules: Vec<Vec<CompositeExpression<AT, ()>>>,
+    verbose: bool,
 }
 
 #[derive(Debug)]
 pub enum SolveError {
     RuleError(usize, ErrorCause),
-    ConstraintError(Error),
 }
 
 impl SolveError {
@@ -26,8 +26,6 @@ impl SolveError {
         match self {
             Self::RuleError(n, c) =>
                 Error::new(c, Position::clone(allocator.get_position(n))),
-            Self::ConstraintError(e) =>
-                e
         }
     }
 }
@@ -37,6 +35,14 @@ where CompositeExpression<AT, ()>: Mismatchable, AT: fmt::Display, CompositeExpr
     pub fn new() -> Self {
         Self {
             rules: Vec::new(),
+            verbose: false,
+        }
+    }
+
+    pub fn new_verbose() -> Self {
+        Self {
+            rules: Vec::new(),
+            verbose: true,
         }
     }
 
@@ -50,9 +56,13 @@ where CompositeExpression<AT, ()>: Mismatchable, AT: fmt::Display, CompositeExpr
     pub fn solve(mut self) -> Result<Solution<AT>, SolveError> {
         assert!(self.rules.len() > 0);
         let mut to_process: Vec<usize> = (0..self.rules.len()).collect();
-        // println!("Type solver\n========");
+        if self.verbose {
+            println!("Type solver\n========");
+        }
         while !to_process.is_empty() {
-            // println!("{}\n", &self);
+            if self.verbose {
+                println!("{}\n", &self);
+            }
             let current_var = to_process.pop().unwrap();
             if !self.rules[current_var].is_empty() {
                 // If there are multiple rules for once variable,
@@ -102,9 +112,11 @@ where CompositeExpression<AT, ()>: Mismatchable, AT: fmt::Display, CompositeExpr
             }
         }
 
-        // println!("Finally:\n===========\n{}", &self);
-        // println!("max_var_index = {}", max_var_index);
-        // println!("free vars: {:?}", &free_vars);
+        if self.verbose {
+            println!("Finally:\n===========\n{}", &self);
+            println!("max_var_index = {}", max_var_index);
+            println!("free vars: {:?}", &free_vars);
+        }
         let mut free_var_mapping: HashMap<usize, usize> = HashMap::new();
         for (i, n) in free_vars.into_iter().enumerate() {
             free_var_mapping.insert(n, i);

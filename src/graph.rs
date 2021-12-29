@@ -71,13 +71,17 @@ impl<T: Eq + Hash + Clone> ObjectGraph<T> {
     /// such that if there's an edge from V to W,
     /// then W comes before V in the ordering.
     /// Returns None if there are loops in the graph.
-    pub fn inverse_topsort(self) -> Option<Vec<T>> {
-        self.g.inverse_topsort().map(|v| {
+    pub fn inverse_topsort(self) -> Result<Vec<T>, T> {
+        self.g.inverse_topsort()
+        .map(|v| {
             let mut r: Vec<T> = Vec::new();
             for k in v.iter() {
                 r.push(T::clone(&self.node_to_obj[*k]));
             }
             r
+        })
+        .map_err(|v| {
+            T::clone(&self.node_to_obj[v])
         })
     }
 
@@ -228,7 +232,7 @@ impl Graph {
     /// such that if there's an edge from V to W,
     /// then W comes before V in the ordering.
     /// Returns None if there are loops in the graph.
-    pub fn inverse_topsort(&self) -> Option<Vec<usize>> {
+    pub fn inverse_topsort(&self) -> Result<Vec<usize>, usize> {
         let n = self.edges.len();
         let mut result: Vec<usize> = Vec::new();
         let mut visited = vec![false; n];
@@ -240,34 +244,28 @@ impl Graph {
             visited: &mut Vec<bool>,
             visited_loop: &mut Vec<bool>,
             result: &mut Vec<usize>
-            ) -> bool {
+            ) -> Result<(), usize> {
             if visited[v] {
-                return true;
+                return Ok(());
             }
             if visited_loop[v] {
-                return false;
+                return Err(v);
             }
             visited_loop[v] = true;
             for w in edges[v].iter() {
-                let r = dfs(*w, edges, visited, visited_loop, result);
-                if !r {
-                    return false;
-                }
+                dfs(*w, edges, visited, visited_loop, result)?;
             }
             visited_loop[v] = false;
             visited[v] = true;
             result.push(v);
-            return true;
+            return Ok(());
         }
         for i in 0..n {
             if !visited[i] {
-                let r = dfs(i, &self.edges, &mut visited, &mut visited_loop, &mut result);
-                if !r {
-                    return None;
-                }
+                dfs(i, &self.edges, &mut visited, &mut visited_loop, &mut result)?;
             }
         }
-        Some(result)
+        Ok(result)
     }
 }
 
@@ -337,7 +335,7 @@ mod tests {
         let mut g = Graph::new();
         g.add_edge(0, 1);
         g.add_edge(1, 0);
-        assert!(g.inverse_topsort().is_none());
+        assert!(g.inverse_topsort().is_err());
     }
 
     fn pos(v: &Vec<usize>, x: usize) -> usize {

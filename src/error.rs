@@ -1,5 +1,6 @@
 use crate::type_info::AtomicType;
 use crate::type_info::AtomicTypeParseError;
+use crate::type_info::KindExpression;
 use crate::type_info::TypeExpression;
 use crate::position::Position;
 use std::fmt;
@@ -19,11 +20,14 @@ pub enum ErrorCause {
     IsAFunction,
     TooManyArguments,
     TypesMismatch(TypeExpression, TypeExpression),
+    KindsMismatch(KindExpression, KindExpression),
+    KindApplicationError(KindExpression, KindExpression),
     AtomicTypeParseError(AtomicTypeParseError),
     TypeConstraintMismatch,
     // TypeConstraintsIncompatible(TypeConstraint, TypeConstraint),
     MultipleTypeSpecification,
     NotAConstraint(TypeExpression),
+    RecursiveType(String),
 }
 
 impl Error {
@@ -31,6 +35,13 @@ impl Error {
         Self {
             cause,
             p: position
+        }
+    }
+
+    pub fn with_position(self, position: Position) -> Self {
+        Self {
+            cause: self.cause,
+            p: position,
         }
     }
 }
@@ -45,6 +56,12 @@ impl Mismatchable for TypeExpression {
     }
 }
 
+impl Mismatchable for KindExpression {
+    fn new_types_mismatch_error(&self, other: &Self) -> ErrorCause {
+        ErrorCause::KindsMismatch(KindExpression::clone(self), KindExpression::clone(other))
+    }
+}
+
 impl fmt::Display for ErrorCause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use ErrorCause::*;
@@ -56,11 +73,14 @@ impl fmt::Display for ErrorCause {
             IsAFunction => f.write_str("a non-functional type declaration for a function"),
             TooManyArguments => f.write_str("too many arguments"),
             TypesMismatch(t1, t2) => write!(f, "cannot match `{}' against `{}'", t1, t2),
+            KindsMismatch(t1, t2) => write!(f, "cannot match `{}' against `{}'", t1, t2),
+            KindApplicationError(k1, k2) => write!(f, "cannot apply kinds ({}) ({})", k1, k2),
             AtomicTypeParseError(e) => write!(f, "{}", e),
             TypeConstraintMismatch => write!(f, "cannot match type constraint"),
             // TypeConstraintsIncompatible(c1, c2) => write!(f, "incompatible type constraints: `{}' and `{}'", c1, c2),
             MultipleTypeSpecification => write!(f, "type is specified multiple times"),
             NotAConstraint(t) => write!(f, "`{}' is not a constraint", t),
+            RecursiveType(s) => write!(f, "recursive types are not allowed, `{}' is recursive", s),
         }
     }
 }

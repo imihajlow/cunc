@@ -67,8 +67,18 @@ fn main() {
     let m = parse(&fname).unwrap();
     println!("{}", m);
     let context = create_default_context();
-    match m.deduce_types(&context) {
-        Ok(deduced) => println!("+++++++++++++++++++\n\n{}", &deduced),
+    let deduced = match m.deduce_types(&context) {
+        Ok(deduced) => {
+            deduced
+        }
+        Err(e) => {
+            eprintln!("{}", &e);
+            return
+        }
+    };
+    match deduced.check_kinds() {
+        Ok(()) => println!("=================\n\n{}", &deduced),
         Err(e) => eprintln!("{}", &e)
     }
+
 }

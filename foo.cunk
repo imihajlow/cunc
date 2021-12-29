@@ -17,5 +17,14 @@ iop x = 5.
 
 data Maybe a = Just a | Nothing.
 
-[a -> Maybe]
-wrong x = x.
+/*[a -> Maybe]
+wrong x = x.*/
+
+/*[a -> Fuck]
+gogogo x = x.*/
+
+data Mop a = Pom (Wer a).
+
+data Wer a = Re a | Im a | Nil.
+
+data Toto a b = Mo (b a).

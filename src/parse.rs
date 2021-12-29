@@ -384,20 +384,20 @@ fn parse_type_definition(mut inner: Pairs<Rule>)
         assert_eq!(tc_pair.as_rule(), Rule::uc_ident);
         let tc_pos = position_from_span(&tc_pair.as_span());
         let tc_name = tc_pair.as_str().to_string();
-        let mut fn_vec: Vec<TypeExpression> = Vec::new();
+        let mut params: Vec<TypeExpression> = Vec::new();
         for tc_param_pair in product_pair_inner {
             assert_eq!(tc_param_pair.as_rule(), Rule::terminal_type);
             let tc_param_type = parse_type(tc_param_pair, &mut tva)?;
-            fn_vec.push(tc_param_type);
+            params.push(tc_param_type);
         }
         if tc_names.contains(&tc_name) {
             return Err(Error::new(ErrorCause::Redefinition(tc_name), tc_pos))
         } else {
             tc_names.insert(String::clone(&tc_name));
-            fn_vec.push(TypeExpression::clone(&new_type));
             let tc = TypeConstructor::new(
                 tc_name,
-                TypeExpression::new_function_from_vec(fn_vec),
+                params,
+                TypeExpression::clone(&new_type),
                 tva.get_type_vars(),
                 tc_pos);
             type_constructors.push(tc);

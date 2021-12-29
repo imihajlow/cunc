@@ -4,6 +4,7 @@ use pest::error::LineColLocation;
 
 #[derive(Debug, Clone)]
 pub enum Position {
+    Unknown,
     Builtin,
     Pos(usize, usize),
     Span((usize, usize), (usize, usize))
@@ -24,6 +25,8 @@ impl Position {
     pub fn merge(&self, other: &Position) -> Position {
         use Position::*;
         match (self, other) {
+            (Unknown, p) => Position::clone(p),
+            (p, Unknown) => Position::clone(p),
             (Builtin, p) => Position::clone(p),
             (p, Builtin) => Position::clone(p),
             (Pos(a,b), Pos(c,d)) => {
@@ -64,6 +67,7 @@ fn before(p1: (usize, usize), p2: (usize, usize)) -> bool {
 impl fmt::Display for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Position::Unknown => write!(f, "<unknown>"),
             Position::Builtin => write!(f, "<builtin>"),
             Position::Pos(r,c) => write!(f, "{}:{}", r, c),
             Position::Span((r1,c1),(r2,c2)) if r1 == r2 => write!(f, "{}:{}-{}", r1, c1, c2),
