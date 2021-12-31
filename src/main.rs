@@ -27,30 +27,30 @@ fn create_default_context() -> TypeContext<'static, TypeAssignment> {
     context.set("sum", &TypeAssignment::ToplevelFunction(
         TypeVars::new(1),
         TypeExpression::new_function(
-            TypeExpression::Var(0, ()),
+            TypeExpression::Var(0),
             TypeExpression::new_function(
-                TypeExpression::Var(0, ()),
-                TypeExpression::Var(0, ()))),
+                TypeExpression::Var(0),
+                TypeExpression::Var(0))),
         ConstraintContext::new_from_vec(vec![
             (FixedType(TypeExpression::Composite(
                 Box::new(TypeExpression::Atomic(AtomicType::Num)),
-                Box::new(TypeExpression::Var(0, ())))),
+                Box::new(TypeExpression::Var(0)))),
             Position::Builtin)
         ]))).unwrap();
     
     context.set("convert", &TypeAssignment::ToplevelFunction(
         TypeVars::new(2),
         TypeExpression::new_function(
-            TypeExpression::Var(0, ()),
-            TypeExpression::Var(1, ())),
+            TypeExpression::Var(0),
+            TypeExpression::Var(1)),
         ConstraintContext::new_from_vec(vec![
             (FixedType(TypeExpression::Composite(
                 Box::new(TypeExpression::Atomic(AtomicType::Num)),
-                Box::new(TypeExpression::Var(0, ())))),
+                Box::new(TypeExpression::Var(0)))),
             Position::Builtin),
             (FixedType(TypeExpression::Composite(
                 Box::new(TypeExpression::Atomic(AtomicType::Num)),
-                Box::new(TypeExpression::Var(1, ())))),
+                Box::new(TypeExpression::Var(1)))),
             Position::Builtin),
         ]))).unwrap();
     context

@@ -335,9 +335,7 @@ fn parse_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
         Rule::lc_ident => {
             Ok(TypeExpression::Var(
                 tva.allocate_type_var(pair.as_str())
-                    .map_err(|c| Error::new(c, position_from_span(&pair.as_span())))?,
-                    ()
-                    ))
+                    .map_err(|c| Error::new(c, position_from_span(&pair.as_span())))?))
         }
         x => {
             println!("{:?}", x);
@@ -366,7 +364,7 @@ fn parse_type_definition(mut inner: Pairs<Rule>)
             let param_index = tva.allocate_type_var(param_name).map_err(|c| Error::new(c, param_pos))?;
             new_type = TypeExpression::Composite(
                 Box::new(new_type),
-                Box::new(TypeExpression::Var(param_index, ())));
+                Box::new(TypeExpression::Var(param_index)));
         }
         new_type
     };
