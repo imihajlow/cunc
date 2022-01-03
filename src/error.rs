@@ -1,8 +1,8 @@
+use crate::position::Position;
 use crate::type_info::AtomicType;
 use crate::type_info::AtomicTypeParseError;
 use crate::type_info::KindExpression;
 use crate::type_info::TypeExpression;
-use crate::position::Position;
 use std::fmt;
 
 #[derive(Debug)]
@@ -28,14 +28,12 @@ pub enum ErrorCause {
     MultipleTypeSpecification,
     NotAConstraint(TypeExpression),
     RecursiveType(String),
+    TypeConstructorNotFound(String),
 }
 
 impl Error {
     pub fn new(cause: ErrorCause, position: Position) -> Self {
-        Self {
-            cause,
-            p: position
-        }
+        Self { cause, p: position }
     }
 
     pub fn with_position(self, position: Position) -> Self {
@@ -81,10 +79,10 @@ impl fmt::Display for ErrorCause {
             MultipleTypeSpecification => write!(f, "type is specified multiple times"),
             NotAConstraint(t) => write!(f, "`{}' is not a constraint", t),
             RecursiveType(s) => write!(f, "recursive types are not allowed, `{}' is recursive", s),
+            TypeConstructorNotFound(s) => write!(f, "type constructor `{}' not found", s),
         }
     }
 }
-
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

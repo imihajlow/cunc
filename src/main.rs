@@ -9,6 +9,8 @@ mod graph;
 mod name_context;
 mod type_var_allocator;
 // mod type_constraint;
+use crate::ast::Module;
+use crate::error::Error;
 use crate::ast::FixedType;
 use crate::type_info::TypeExpression;
 use crate::type_info::TypeVars;
@@ -56,6 +58,15 @@ fn create_default_context() -> TypeContext<'static, TypeAssignment> {
     context
 }
 
+fn parse_and_deduce(fname: &str) -> Result<Module<FixedType>, Error> {
+    let m = parse(fname)?;
+    println!("{}", m);
+    let context = create_default_context();
+    let deduced = m.deduce_types(&context)?;
+    deduced.check_kinds()?;
+    Ok(deduced)
+}
+
 fn main() {
     let mut fname = String::new();
     {
@@ -64,21 +75,8 @@ fn main() {
         ap.refer(&mut fname).add_argument("file", Store, "Program file");
         ap.parse_args_or_exit();
     }
-    let m = parse(&fname).unwrap();
-    println!("{}", m);
-    let context = create_default_context();
-    let deduced = match m.deduce_types(&context) {
-        Ok(deduced) => {
-            deduced
-        }
-        Err(e) => {
-            eprintln!("{}", &e);
-            return
-        }
-    };
-    match deduced.check_kinds() {
-        Ok(()) => println!("=================\n\n{}", &deduced),
+    match parse_and_deduce(&fname) {
+        Ok(deduced) => println!("=================\n\n{}", &deduced),
         Err(e) => eprintln!("{}", &e)
     }
-
 }

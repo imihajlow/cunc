@@ -68,6 +68,7 @@ assignment = {
 }
 
 expression = {
+    pmatch |
     assignment |
     application |
     ("{" ~ expression ~ "}")
@@ -75,6 +76,20 @@ expression = {
 
 application = {
     part+
+}
+
+pmatch = {
+    "match" ~ expression ~ "{"
+    ~ case+
+    ~ "}"
+}
+
+case = {
+    pattern ~ "=>" ~ expression ~ ","
+}
+
+pattern = {
+    uc_ident ~ lc_ident*
 }
 
 part = _{

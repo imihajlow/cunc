@@ -17,14 +17,18 @@ iop x = 5.
 
 data Maybe a = Just a | Nothing.
 
-/*[a -> Maybe]
-wrong x = x.*/
-
-/*[a -> Fuck]
-gogogo x = x.*/
-
 data Mop a = Pom (Wer a).
 
 data Wer a = Re a | Im a | Nil.
 
 data Toto a b = Mo (b a).
+
+[a -> U32]
+m x = match x {
+  Just b => match b {
+    Re b => b,
+    Im b => b,
+    Nil => 5,
+  },
+  Nothing => 0,
+}.

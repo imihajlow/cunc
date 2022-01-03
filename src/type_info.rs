@@ -1,13 +1,13 @@
-use crate::error::{ErrorCause};
+use crate::error::ErrorCause;
 use crate::name_context::TypeContext;
-use crate::type_solver::Solver;
-use crate::util::max_options;
 use crate::position::Position;
-use std::collections::{HashMap, HashSet};
+use crate::type_solver::Solver;
 use crate::type_var_allocator::TypeVarAllocator;
+use crate::util::max_options;
 use crate::util::var_from_number;
-use std::{str::FromStr};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::str::FromStr;
 
 pub type TypeExpression = CompositeExpression<AtomicType>;
 
@@ -43,7 +43,7 @@ pub enum AtomicType {
     Int(IntType),
     Function,
     Num,
-    User(String)
+    User(String),
 }
 
 #[derive(Debug)]
@@ -61,9 +61,7 @@ pub enum AtomicKind {
 
 impl TypeVars {
     pub fn new(range: usize) -> Self {
-        Self {
-            range,
-        }
+        Self { range }
     }
     pub fn is_empty(&self) -> bool {
         self.range == 0
@@ -82,8 +80,10 @@ impl<AT> CompositeExpression<AT> {
         CompositeExpression::Composite(
             Box::new(CompositeExpression::Composite(
                 Box::new(CompositeExpression::Atomic(op)),
-                Box::new(a))),
-            Box::new(b))
+                Box::new(a),
+            )),
+            Box::new(b),
+        )
     }
 }
 
@@ -93,7 +93,9 @@ impl<AT: Clone> CompositeExpression<AT> {
         assert!(!v.is_empty());
         let mut it = v.into_iter().rev();
         let last = it.next().unwrap();
-        it.fold(last, |tail, cur| Self::new_transformation(cur, tail, AT::clone(&op)))
+        it.fold(last, |tail, cur| {
+            Self::new_transformation(cur, tail, AT::clone(&op))
+        })
     }
 }
 
@@ -127,8 +129,10 @@ impl TypeExpression {
     pub fn collect_refs(&self, set: &mut HashSet<String>) {
         use CompositeExpression::*;
         match self {
-            Atomic(a) => if let AtomicType::User(s) = a {
-                set.insert(s.to_string());
+            Atomic(a) => {
+                if let AtomicType::User(s) = a {
+                    set.insert(s.to_string());
+                }
             }
             Var(_) => (),
             Composite(a, b) => {
@@ -138,8 +142,10 @@ impl TypeExpression {
         }
     }
 
-    pub fn get_kind(&self, context: &TypeContext<KindExpression>)
-            -> Result<KindExpression, ErrorCause> {
+    pub fn get_kind(
+        &self,
+        context: &TypeContext<KindExpression>,
+    ) -> Result<KindExpression, ErrorCause> {
         use CompositeExpression::*;
         match self {
             Atomic(a) => a.get_kind(context),
@@ -158,9 +164,7 @@ impl KindExpression {
     pub const CONSTRAINT: KindExpression = KindExpression::Atomic(AtomicKind::Constraint);
 
     pub fn mapping(from: KindExpression, to: KindExpression) -> Self {
-        KindExpression::Composite(
-                Box::new(from),
-                Box::new(to))
+        KindExpression::Composite(Box::new(from), Box::new(to))
     }
 
     pub fn substitute_free_vars(&mut self, with: &KindExpression) {
@@ -179,11 +183,19 @@ impl KindExpression {
         use CompositeExpression::*;
         match self {
             Var(_) => unreachable!("kind variables should be resolved"),
-            Atomic(_) => Err(ErrorCause::KindApplicationError(Self::clone(self), Self::clone(applicant))),
-            Composite(a, b) => if &**a == applicant {
-                Ok(Self::clone(b))
-            } else {
-                Err(ErrorCause::KindsMismatch(Self::clone(a), Self::clone(applicant)))
+            Atomic(_) => Err(ErrorCause::KindApplicationError(
+                Self::clone(self),
+                Self::clone(applicant),
+            )),
+            Composite(a, b) => {
+                if &**a == applicant {
+                    Ok(Self::clone(b))
+                } else {
+                    Err(ErrorCause::KindsMismatch(
+                        Self::clone(a),
+                        Self::clone(applicant),
+                    ))
+                }
             }
         }
     }
@@ -198,7 +210,8 @@ impl<AT: Clone> CompositeExpression<AT> {
             Var(n) => Var(allocator.map_existing(*n)),
             Composite(a, b) => Composite(
                 Box::new(a.remap_vars(allocator)),
-                Box::new(b.remap_vars(allocator)))
+                Box::new(b.remap_vars(allocator)),
+            ),
         }
     }
 
@@ -210,7 +223,8 @@ impl<AT: Clone> CompositeExpression<AT> {
             Var(n) => Var(mapping[&n]),
             Composite(a, b) => Composite(
                 Box::new(a.rename_vars(mapping)),
-                Box::new(b.rename_vars(mapping)))
+                Box::new(b.rename_vars(mapping)),
+            ),
         }
     }
 
@@ -234,7 +248,7 @@ impl<AT: Clone> CompositeExpression<AT> {
         match self {
             Atomic(_) => true,
             Var(_) => false,
-            Composite(a, b) => a.is_fixed() && b.is_fixed()
+            Composite(a, b) => a.is_fixed() && b.is_fixed(),
         }
     }
 
@@ -244,34 +258,37 @@ impl<AT: Clone> CompositeExpression<AT> {
         match self {
             Var(n) => Some(*n),
             Atomic(_) => None,
-            Composite(a, b) =>
-                max_options(a.get_max_var_index(), b.get_max_var_index())
+            Composite(a, b) => max_options(a.get_max_var_index(), b.get_max_var_index()),
         }
     }
 }
 
-impl<> CompositeExpression<AtomicType> {
-    pub fn create_kind_rules(&self,
-            tva: &mut TypeVarAllocator,
-            context: &TypeContext<KindExpression>,
-            solver: &mut Solver<AtomicKind>)
-            -> Result<usize, ErrorCause> {
+impl CompositeExpression<AtomicType> {
+    pub fn create_kind_rules(
+        &self,
+        tva: &mut TypeVarAllocator,
+        context: &TypeContext<KindExpression>,
+        solver: &mut Solver<AtomicKind>,
+    ) -> Result<usize, ErrorCause> {
         use CompositeExpression::*;
         let my_index = tva.allocate(&Position::Unknown);
         match self {
             Atomic(a) => {
                 solver.add_rule(my_index, a.get_kind(context)?);
-            },
+            }
             Var(n) => {
                 solver.add_rule(my_index, KindExpression::Var(tva.map_existing(*n)));
             }
             Composite(a, b) => {
                 let a_index = a.create_kind_rules(tva, context, solver)?;
                 let b_index = b.create_kind_rules(tva, context, solver)?;
-                solver.add_rule(a_index,
+                solver.add_rule(
+                    a_index,
                     KindExpression::Composite(
                         Box::new(KindExpression::Var(b_index)),
-                        Box::new(KindExpression::Var(my_index))));
+                        Box::new(KindExpression::Var(my_index)),
+                    ),
+                );
             }
         };
         Ok(my_index)
@@ -281,49 +298,52 @@ impl<> CompositeExpression<AtomicType> {
         use CompositeExpression::*;
         // TODO kinds
         match self {
-            Var(_) |
-            Atomic(_) => Err(ErrorCause::NotAConstraint(TypeExpression::clone(self))),
+            Var(_) | Atomic(_) => Err(ErrorCause::NotAConstraint(TypeExpression::clone(self))),
             Composite(a, b) => match &**a {
                 Atomic(t) if *t == AtomicType::Num => match &**b {
                     Var(_) => Ok(()),
                     Atomic(t) if matches!(t, AtomicType::Int(_)) => Ok(()),
                     _ => Err(ErrorCause::TypeConstraintMismatch),
-                }
+                },
                 _ => Err(ErrorCause::NotAConstraint(TypeExpression::clone(self))),
-            }
+            },
         }
     }
 }
 
 impl IntType {
     pub fn new(signed: bool, bits: IntBits) -> Self {
-        Self {
-            signed,
-            bits
-        }
+        Self { signed, bits }
     }
 }
 
 impl AtomicType {
-    fn get_kind(&self, context: &TypeContext<KindExpression>) -> Result<KindExpression, ErrorCause> {
+    fn get_kind(
+        &self,
+        context: &TypeContext<KindExpression>,
+    ) -> Result<KindExpression, ErrorCause> {
         use AtomicType::*;
         match self {
             Int(_) => Ok(KindExpression::Atomic(AtomicKind::Type)),
             // * -> * -> *
             // (*, (*, *))
             Function => Ok(KindExpression::mapping(
+                KindExpression::Atomic(AtomicKind::Type),
+                KindExpression::mapping(
                     KindExpression::Atomic(AtomicKind::Type),
-                    KindExpression::mapping(
-                        KindExpression::Atomic(AtomicKind::Type), 
-                        KindExpression::Atomic(AtomicKind::Type)))),
+                    KindExpression::Atomic(AtomicKind::Type),
+                ),
+            )),
             // * -> Constraint
             // (*, Constraint)
             Num => Ok(KindExpression::mapping(
                 KindExpression::Atomic(AtomicKind::Type),
-                KindExpression::Atomic(AtomicKind::Constraint))),
-            User(s) => context.get(s)
+                KindExpression::Atomic(AtomicKind::Constraint),
+            )),
+            User(s) => context
+                .get(s)
                 .map(|e| KindExpression::clone(e))
-                .ok_or(ErrorCause::UnknownIdentifier(s.to_string()))
+                .ok_or(ErrorCause::UnknownIdentifier(s.to_string())),
         }
     }
 }
@@ -345,7 +365,7 @@ impl FromStr for AtomicType {
                         Ok(16) => IntBits::B16,
                         Ok(32) => IntBits::B32,
                         Ok(_) => return Ok(AtomicType::User(s.to_string())),
-                        _ => return Ok(AtomicType::User(s.to_string()))
+                        _ => return Ok(AtomicType::User(s.to_string())),
                     };
                     Ok(AtomicType::Int(IntType { signed, bits }))
                 } else {
@@ -368,15 +388,13 @@ impl fmt::Display for TypeExpression {
         match self {
             Atomic(t) => write!(f, "{}", t),
             Var(n) => f.write_str(&var_from_number(*n)),
-            Composite(a, b) => {
-                match **a {
-                    Atomic(AtomicType::Function) => match **b {
-                        Atomic(_) | Var(_) => write!(f, "{} ->", b),
-                        Composite(_, _) => write!(f, "({}) ->", b),
-                    }
-                    _ => write!(f, "{} {}", a, b)
-                }
-            }
+            Composite(a, b) => match **a {
+                Atomic(AtomicType::Function) => match **b {
+                    Atomic(_) | Var(_) => write!(f, "{} ->", b),
+                    Composite(_, _) => write!(f, "({}) ->", b),
+                },
+                _ => write!(f, "{} {}", a, b),
+            },
         }
     }
 }
@@ -387,13 +405,10 @@ impl fmt::Display for KindExpression {
         match self {
             Atomic(t) => write!(f, "{}", t),
             Var(n) => f.write_str(&var_from_number(*n)),
-            Composite(a, b) => {
-                match **b {
-                    Var(_) |
-                    Atomic(_) => write!(f, "{} -> {}", a, b),
-                    _ => write!(f, "{} -> ({})", a, b)
-                }
-            }
+            Composite(a, b) => match **b {
+                Var(_) | Atomic(_) => write!(f, "{} -> {}", a, b),
+                _ => write!(f, "{} -> ({})", a, b),
+            },
         }
     }
 }
