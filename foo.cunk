@@ -7,3 +7,11 @@ data Wer a = Re a | Im a | Nil.
 data Toto a b = Mo (b a).
 
 x = Mo (Just 5).
+
+[S8]
+y = match x {
+  Mo a => match a {
+    Just x => x,
+    Nothing => 0,
+  },
+}.

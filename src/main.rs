@@ -60,7 +60,6 @@ fn create_default_context() -> TypeContext<'static, TypeAssignment> {
 
 fn parse_and_deduce(fname: &str) -> Result<Module<FixedType>, Error> {
     let m = parse_file(fname)?;
-    println!("{:#?}", m);
     let context = create_default_context();
     let deduced = m.deduce_types(&context)?;
     println!("=== DEDUCED ===\n{}", deduced);

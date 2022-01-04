@@ -27,15 +27,15 @@ use std::iter;
 */
 
 /// Type which can be specified or not.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OptionalType(pub Option<TypeExpression>);
 
 /// Type specified by a type variable.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VariableType(pub usize);
 
 /// Known (maybe generic) type.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FixedType(pub TypeExpression);
 
 #[derive(Debug, Clone)]
@@ -341,7 +341,7 @@ impl Module<FixedType> {
         let toporder = self.build_types_top_order()?;
         let mut context: TypeContext<KindExpression> = TypeContext::new();
         for t in toporder.into_iter() {
-            let mut solver: Solver<AtomicKind> = Solver::new_verbose();
+            let mut solver: Solver<AtomicKind> = Solver::new();
             let mut tva = TypeVarAllocator::new();
             tva.enter_function(t.arity, &t.p);
             for c in t.constructors.iter() {
@@ -565,8 +565,13 @@ impl Expression<OptionalType> {
                     e.assign_type_vars(context, solver, allocator, constraint_context)?;
                 let mut annotated_cases: Vec<Case<VariableType>> = Vec::new();
                 for case in v.iter() {
-                    let new_case =
-                        case.assign_type_vars(context, solver, allocator, constraint_context, annotated_e.t.0)?;
+                    let new_case = case.assign_type_vars(
+                        context,
+                        solver,
+                        allocator,
+                        constraint_context,
+                        annotated_e.t.0,
+                    )?;
                     solver.add_rule(my_var_index, TypeExpression::Var(new_case.body.t.0));
                     annotated_cases.push(new_case);
                 }
@@ -730,8 +735,7 @@ impl ConstraintContext<OptionalType> {
 
 impl Function<VariableType> {
     fn apply_solution(self, solution: &Solution<AtomicType>) -> Result<Function<FixedType>, Error> {
-        let new_constraint_context = self.context.translate_types(solution);
-        new_constraint_context.check()?;
+        let new_constraint_context = self.context.translate_types(solution).check_and_reduce()?;
         Ok(Function {
             name: self.name,
             body: self.body.translate_types(solution),
@@ -929,14 +933,13 @@ impl Binding<FixedType> {
         check_kind_of_type(&self.t.0, context, &self.p)
     }
 }
+
 impl ConstraintContext<FixedType> {
     fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
         for (t, p) in self.c.iter() {
-            // println!("{}", t.0);
             let kind =
                 t.0.get_kind(context)
                     .map_err(|c| Error::new(c, Position::clone(p)))?;
-            // println!("{} :: {}", t.0, kind);
             check_kinds_eq(kind, KindExpression::CONSTRAINT, p)?;
         }
         Ok(())
@@ -1037,13 +1040,31 @@ impl<Type> ConstraintContext<Type> {
     }
 }
 
-impl ConstraintContext<FixedType> {
-    pub fn check(&self) -> Result<(), Error> {
-        for (t, p) in self.c.iter() {
-            t.0.check_constraint()
-                .map_err(|c| Error::new(c, Position::clone(p)))?;
+impl<Type> ConstraintContext<Type>
+where
+    Type: PartialEq,
+{
+    pub fn add_unique(&mut self, t: Type, p: &Position) {
+        if self.c.iter().find(|(c, p)| c == &t).is_none() {
+            self.c.push((t, Position::clone(p)));
         }
-        Ok(())
+    }
+}
+
+impl ConstraintContext<FixedType> {
+    pub fn check_and_reduce(self) -> Result<Self, Error> {
+        let mut result = Self::new();
+        for (t, p) in self.c.into_iter() {
+            match t
+                .0
+                .check_constraint()
+                .map_err(|c| Error::new(c, Position::clone(&p)))?
+            {
+                Some(t) => result.add_unique(FixedType(t), &p),
+                None => (),
+            }
+        }
+        Ok(result)
     }
 }
 
@@ -1234,10 +1255,10 @@ mod tests {
         let expected_toto_kind = KindExpression::mapping(
             KindExpression::TYPE,
             KindExpression::mapping(
-                KindExpression::mapping(
-                    KindExpression::TYPE,
-                    KindExpression::TYPE),
-                KindExpression::TYPE));
+                KindExpression::mapping(KindExpression::TYPE, KindExpression::TYPE),
+                KindExpression::TYPE,
+            ),
+        );
         assert_eq!(toto_kind, &expected_toto_kind);
     }
 }

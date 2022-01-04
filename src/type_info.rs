@@ -9,6 +9,42 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
 
+/*
+    Example types:
+
+    1.  a -> b = (->) a b
+
+        Composite
+            Composite
+                Function
+                a
+            b
+
+    2.  Maybe a
+
+        Composite
+            User Maybe
+            a
+
+    Example kinds:
+
+    1.  * -> *
+        
+        Composite
+            Type
+            Type
+
+    2. * -> (* -> *) -> *
+
+        Composite
+            Type
+            Composite
+                Composite
+                    Type
+                    Type
+                Type
+*/
+
 pub type TypeExpression = CompositeExpression<AtomicType>;
 
 pub type KindExpression = CompositeExpression<AtomicKind>;
@@ -155,10 +191,8 @@ impl TypeExpression {
             Atomic(a) => a.get_kind(context),
             Var(_) => Ok(KindExpression::Atomic(AtomicKind::Type)),
             Composite(a, b) => {
-                println!("get composite kind ({}) ({})", a, b);
                 let a_kind = a.get_kind(context)?;
                 let b_kind = b.get_kind(context)?;
-                println!("({}) ({})", a_kind, b_kind);
                 a_kind.apply(&b_kind)
             }
         }
@@ -300,18 +334,17 @@ impl CompositeExpression<AtomicType> {
         Ok(my_index)
     }
 
-    pub fn check_constraint(&self) -> Result<(), ErrorCause> {
+    pub fn check_constraint(self) -> Result<Option<Self>, ErrorCause> {
         use CompositeExpression::*;
-        // TODO kinds
-        match self {
-            Var(_) | Atomic(_) => Err(ErrorCause::NotAConstraint(TypeExpression::clone(self))),
+        match &self {
+            Var(_) | Atomic(_) => Err(ErrorCause::NotAConstraint(self)),
             Composite(a, b) => match &**a {
                 Atomic(t) if *t == AtomicType::Num => match &**b {
-                    Var(_) => Ok(()),
-                    Atomic(t) if matches!(t, AtomicType::Int(_)) => Ok(()),
+                    Var(_) => Ok(Some(self)),
+                    Atomic(t) if matches!(t, AtomicType::Int(_)) => Ok(None),
                     _ => Err(ErrorCause::TypeConstraintMismatch),
                 },
-                _ => Err(ErrorCause::NotAConstraint(TypeExpression::clone(self))),
+                _ => Err(ErrorCause::NotAConstraint(self)),
             },
         }
     }
@@ -383,7 +416,7 @@ impl FromStr for AtomicType {
 }
 
 impl fmt::Display for TypeVars {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Ok(())
     }
 }
