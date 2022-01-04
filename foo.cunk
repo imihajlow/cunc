@@ -1,20 +1,3 @@
-id z = z.
-
-[Num a => a -> a]
-foo = {
-  id id
-}.
-
-
-bar = id 5.
-
-[U32]
-baz = bar.
-
-[Num a => b -> U32]
-iop x = 5.
-
-
 data Maybe a = Just a | Nothing.
 
 data Mop a = Pom (Wer a).
@@ -23,12 +6,4 @@ data Wer a = Re a | Im a | Nil.
 
 data Toto a b = Mo (b a).
 
-[a -> U32]
-m x = match x {
-  Just b => match b {
-    Re b => b,
-    Im b => b,
-    Nil => 5,
-  },
-  Nothing => 0,
-}.
+x = Mo (Just 5).

@@ -14,7 +14,7 @@ use crate::error::Error;
 use crate::ast::FixedType;
 use crate::type_info::TypeExpression;
 use crate::type_info::TypeVars;
-use crate::{parse::parse, name_context::TypeContext, ast::TypeAssignment};
+use crate::{parse::parse_file, name_context::TypeContext, ast::TypeAssignment};
 use crate::position::Position;
 use argparse::{ArgumentParser, Store};
 use ast::ConstraintContext;
@@ -59,10 +59,11 @@ fn create_default_context() -> TypeContext<'static, TypeAssignment> {
 }
 
 fn parse_and_deduce(fname: &str) -> Result<Module<FixedType>, Error> {
-    let m = parse(fname)?;
-    println!("{}", m);
+    let m = parse_file(fname)?;
+    println!("{:#?}", m);
     let context = create_default_context();
     let deduced = m.deduce_types(&context)?;
+    println!("=== DEDUCED ===\n{}", deduced);
     deduced.check_kinds()?;
     Ok(deduced)
 }

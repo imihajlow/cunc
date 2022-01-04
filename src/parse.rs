@@ -16,8 +16,12 @@ pub struct CuncParser;
 
 type TcMap = HashMap<String, TypeConstructor>;
 
-pub fn parse(fname: &str) -> Result<Module<OptionalType>, Error> {
+pub fn parse_file(fname: &str) -> Result<Module<OptionalType>, Error> {
     let code = std::fs::read_to_string(&fname).unwrap();
+    parse_str(&code)
+}
+
+pub fn parse_str(code: &str) -> Result<Module<OptionalType>, Error> {
     let root = match CuncParser::parse(Rule::main, &code) {
         Ok(ast) => ast,
         Err(e) => {
@@ -246,7 +250,10 @@ fn parse_expression(
                     Rule::var_type_spec => {
                         let e_pair = inner.next().unwrap();
                         assert!(e_pair.as_rule() == Rule::expression);
-                        (Some(parse_type(next, tva)?), parse_expression(e_pair, tva, tc_map)?)
+                        (
+                            Some(parse_type(next, tva)?),
+                            parse_expression(e_pair, tva, tc_map)?,
+                        )
                     }
                     Rule::expression => (None, parse_expression(next, tva, tc_map)?),
                     _ => unreachable!(),
@@ -308,7 +315,12 @@ fn parse_case(
     assert_eq!(body_p.as_rule(), Rule::expression);
     let body = parse_expression(body_p, tva, tc_map)?;
 
-    Ok(Case::<OptionalType>::new(TypeConstructor::clone(&tc), tc_params, body, pattern_pos))
+    Ok(Case::<OptionalType>::new(
+        TypeConstructor::clone(&tc),
+        tc_params,
+        body,
+        pattern_pos,
+    ))
 }
 
 fn parse_dec_constant(pair: Pair<Rule>) -> Result<u64, Error> {
@@ -451,10 +463,16 @@ fn parse_type_definition(mut inner: Pairs<Rule>, tc_map: &mut TcMap) -> Result<S
             params.push(tc_param_type);
         }
         if tc_names.contains(tc_name) {
-            return Err(Error::new(ErrorCause::Redefinition(tc_name.to_owned()), tc_pos));
+            return Err(Error::new(
+                ErrorCause::Redefinition(tc_name.to_owned()),
+                tc_pos,
+            ));
         } else {
             if tc_map.contains_key(tc_name) {
-                return Err(Error::new(ErrorCause::Redefinition(tc_name.to_owned()), tc_pos));
+                return Err(Error::new(
+                    ErrorCause::Redefinition(tc_name.to_owned()),
+                    tc_pos,
+                ));
             }
             tc_names.insert(tc_name.to_owned());
             let tc = TypeConstructor::new(
@@ -475,4 +493,84 @@ fn parse_type_definition(mut inner: Pairs<Rule>, tc_map: &mut TcMap) -> Result<S
         type_constructors,
         name_pos,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::type_info::{CompositeExpression, TypeExpression};
+
+    #[test]
+    fn test_fn_type1() {
+        let code = "a -> b";
+        let root = CuncParser::parse(Rule::arrow_type, &code)
+            .unwrap()
+            .next()
+            .unwrap();
+        let mut tva = TypeVarAllocator::new();
+        let t = parse_type(root, &mut tva).unwrap();
+        use CompositeExpression::*;
+        let expected = TypeExpression::new_function(Var(0), Var(1));
+        assert_eq!(t, expected);
+    }
+
+    #[test]
+    fn test_fn_type2() {
+        let code = "a -> b -> c -> d";
+        let root = CuncParser::parse(Rule::arrow_type, &code)
+            .unwrap()
+            .next()
+            .unwrap();
+        let mut tva = TypeVarAllocator::new();
+        let t = parse_type(root, &mut tva).unwrap();
+        use CompositeExpression::*;
+        let expected = TypeExpression::new_function(
+            Var(0),
+            TypeExpression::new_function(Var(1), TypeExpression::new_function(Var(2), Var(3))),
+        );
+        assert_eq!(t, expected);
+    }
+
+    #[test]
+    fn test_fn_type3() {
+        let code = "a -> (b -> c) -> d";
+        let root = CuncParser::parse(Rule::arrow_type, &code)
+            .unwrap()
+            .next()
+            .unwrap();
+        let mut tva = TypeVarAllocator::new();
+        let t = parse_type(root, &mut tva).unwrap();
+        use CompositeExpression::*;
+        let expected = TypeExpression::new_function(
+            Var(0),
+            TypeExpression::new_function(TypeExpression::new_function(Var(1), Var(2)), Var(3)),
+        );
+        assert_eq!(t, expected);
+    }
+
+    #[test]
+    fn test_fn_type_def() {
+        use CompositeExpression::*;
+        let code = "data Toto a b = Mo (b a).";
+        let root = CuncParser::parse(Rule::type_def, &code)
+            .unwrap()
+            .next()
+            .unwrap();
+        let mut tc_map: TcMap = HashMap::new();
+        let t = parse_type_definition(root.into_inner(), &mut tc_map).unwrap();
+        assert!(tc_map.contains_key("Mo"));
+        assert_eq!(t.arity, 2);
+        assert_eq!(t.name, "Toto");
+        assert_eq!(t.constructors.len(), 1);
+        let tc = t.constructors.last().unwrap();
+        assert_eq!(tc.name, "Mo");
+        assert_eq!(tc.enum_index, 0);
+        let parent_type = &tc.parent_type;
+        let parent_type_expected: TypeExpression = TypeExpression::new_composite(
+            TypeExpression::new_composite(Atomic(AtomicType::User("Toto".to_string())), Var(0)),
+            Var(1));
+        assert_eq!(parent_type, &parent_type_expected);
+        assert_eq!(tc.params.len(), 1);
+        assert_eq!(tc.params.last().unwrap(), &TypeExpression::new_composite(Var(1), Var(0)));
+    }
 }

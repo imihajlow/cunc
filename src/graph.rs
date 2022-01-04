@@ -215,7 +215,9 @@ impl Graph {
             }
         }
         let mut result_graph = Graph::new();
-        result_graph.add_nodes_up_to(result.len() - 1);
+        if result.len() > 0 {
+            result_graph.add_nodes_up_to(result.len() - 1);
+        }
         for v in 0..self.edges.len() {
             let v_scc = v_to_scc[v];
             for w in self.edges[v].iter() {
@@ -317,7 +319,7 @@ mod tests {
         g.add_edge(4, 0);
         g.add_edge(4, 3);
         
-        let (scc, m) = g.find_strongly_connected();
+        let (scc, _m) = g.find_strongly_connected();
         assert_eq!(scc.get_node_count(), 4);
     }
 
@@ -326,8 +328,16 @@ mod tests {
         let mut g = Graph::new();
         g.add_nodes_up_to(0);
         
-        let (scc, m) = g.find_strongly_connected();
+        let (scc, _m) = g.find_strongly_connected();
         assert_eq!(scc.get_node_count(), 1);
+    }
+
+    #[test]
+    fn test_scc_empty() {
+        let g = Graph::new();
+        let (scc, m) = g.find_strongly_connected();
+        assert_eq!(scc.get_node_count(), 0);
+        assert_eq!(m.len(), 0);
     }
 
     #[test]

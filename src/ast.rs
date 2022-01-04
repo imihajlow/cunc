@@ -100,19 +100,19 @@ pub struct ConstraintContext<Type> {
 
 #[derive(Debug, Clone)]
 pub struct TypeConstructor {
-    name: String,
-    enum_index: usize,
-    params: Vec<TypeExpression>,
-    parent_type: TypeExpression,
-    type_vars: TypeVars,
+    pub name: String,
+    pub enum_index: usize,
+    pub params: Vec<TypeExpression>,
+    pub parent_type: TypeExpression,
+    pub type_vars: TypeVars,
     p: Position,
 }
 
 #[derive(Debug, Clone)]
 pub struct SumType {
-    name: String,
-    arity: usize,
-    constructors: Vec<TypeConstructor>,
+    pub name: String,
+    pub arity: usize,
+    pub constructors: Vec<TypeConstructor>,
     p: Position,
 }
 
@@ -337,11 +337,11 @@ impl Module<OptionalType> {
 }
 
 impl Module<FixedType> {
-    pub fn check_kinds(&self) -> Result<(), Error> {
+    pub fn deduce_kinds(&self) -> Result<TypeContext<KindExpression>, Error> {
         let toporder = self.build_types_top_order()?;
         let mut context: TypeContext<KindExpression> = TypeContext::new();
         for t in toporder.into_iter() {
-            let mut solver: Solver<AtomicKind> = Solver::new();
+            let mut solver: Solver<AtomicKind> = Solver::new_verbose();
             let mut tva = TypeVarAllocator::new();
             tva.enter_function(t.arity, &t.p);
             for c in t.constructors.iter() {
@@ -358,7 +358,8 @@ impl Module<FixedType> {
             let mut kind = (0..t.arity)
                 .map(|i| solution.translate_var_index(i))
                 .chain(iter::once(KindExpression::Atomic(AtomicKind::Type)))
-                .reduce(|acc, b| KindExpression::Composite(Box::new(acc), Box::new(b)))
+                .rev()
+                .reduce(|acc, b| KindExpression::Composite(Box::new(b), Box::new(acc)))
                 .unwrap();
             // Assuming any remaining free var correspond to types.
             kind.substitute_free_vars(&KindExpression::Atomic(AtomicKind::Type));
@@ -367,6 +368,11 @@ impl Module<FixedType> {
                 .set(&t.name, &kind)
                 .map_err(|c| Error::new(c, t.p))?;
         }
+        Ok(context)
+    }
+
+    pub fn check_kinds(&self) -> Result<(), Error> {
+        let context = self.deduce_kinds()?;
         for f in self.functions.iter() {
             f.check_kinds(&context)?;
         }
@@ -1207,5 +1213,31 @@ impl<Type: PrefixFormatter> fmt::Display for Module<Type> {
             write!(f, "{}\n\n", fun)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse::parse_str;
+
+    #[test]
+    fn test_deduce_kinds() {
+        let code = "data Toto a b = Mo (b a).";
+        let module = parse_str(code).unwrap();
+        let typed = module.deduce_types(&TypeContext::new()).unwrap();
+        let kind_context = typed.deduce_kinds().unwrap();
+        let toto_kind = kind_context.get("Toto").unwrap();
+
+        use crate::type_info::KindExpression;
+        // * -> (* -> *) -> *
+        let expected_toto_kind = KindExpression::mapping(
+            KindExpression::TYPE,
+            KindExpression::mapping(
+                KindExpression::mapping(
+                    KindExpression::TYPE,
+                    KindExpression::TYPE),
+                KindExpression::TYPE));
+        assert_eq!(toto_kind, &expected_toto_kind);
     }
 }

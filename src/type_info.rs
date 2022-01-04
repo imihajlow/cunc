@@ -85,6 +85,10 @@ impl<AT> CompositeExpression<AT> {
             Box::new(b),
         )
     }
+
+    pub fn new_composite(a: Self, b: Self) -> Self {
+        CompositeExpression::Composite(Box::new(a), Box::new(b))
+    }
 }
 
 impl<AT: Clone> CompositeExpression<AT> {
@@ -151,8 +155,10 @@ impl TypeExpression {
             Atomic(a) => a.get_kind(context),
             Var(_) => Ok(KindExpression::Atomic(AtomicKind::Type)),
             Composite(a, b) => {
+                println!("get composite kind ({}) ({})", a, b);
                 let a_kind = a.get_kind(context)?;
                 let b_kind = b.get_kind(context)?;
+                println!("({}) ({})", a_kind, b_kind);
                 a_kind.apply(&b_kind)
             }
         }
@@ -405,9 +411,9 @@ impl fmt::Display for KindExpression {
         match self {
             Atomic(t) => write!(f, "{}", t),
             Var(n) => f.write_str(&var_from_number(*n)),
-            Composite(a, b) => match **b {
+            Composite(a, b) => match **a {
                 Var(_) | Atomic(_) => write!(f, "{} -> {}", a, b),
-                _ => write!(f, "{} -> ({})", a, b),
+                _ => write!(f, "({}) -> {}", a, b),
             },
         }
     }
