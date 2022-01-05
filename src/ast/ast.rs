@@ -23,7 +23,7 @@ use std::iter;
    Type inference system takes Module<OptionalType>,
    assigns type variables to every part of every expression producing VariableType-based objects,
    and after deducing variable values with type_solver::Solver substitutes variables with fixed types,
-   producing Module<FixedType>.
+   producing Module<TypeExpression>.
 */
 
 /// Type which can be specified or not.
@@ -33,10 +33,6 @@ pub(super) struct OptionalType(pub Option<TypeExpression>);
 /// Type specified by a type variable.
 #[derive(Debug, Clone, PartialEq)]
 struct VariableType(pub usize);
-
-/// Known (maybe generic) type.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FixedType(pub TypeExpression);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expression<Type> {
@@ -249,7 +245,7 @@ impl<Type> Module<Type> {
 /// Enum used in type context.
 #[derive(Debug, Clone)]
 pub enum TypeAssignment {
-    ToplevelFunction(TypeVars, TypeExpression, ConstraintContext<FixedType>),
+    ToplevelFunction(TypeVars, TypeExpression, ConstraintContext<TypeExpression>),
     LocalName(usize),
 }
 
@@ -266,7 +262,7 @@ impl Module<OptionalType> {
     pub(super) fn deduce_types(
         &self,
         parent_context: &TypeContext<TypeAssignment>,
-    ) -> Result<Module<FixedType>, Error> {
+    ) -> Result<Module<TypeExpression>, Error> {
         let function_by_name: HashMap<String, &Function<_>> =
             HashMap::from_iter(self.functions.iter().map(|f| (f.name.to_string(), f)));
         let dep_graph = self.build_dependency_graph();
@@ -274,7 +270,7 @@ impl Module<OptionalType> {
             .find_strongly_connected()
             .inverse_topsort()
             .unwrap();
-        let mut result: Module<FixedType> = Module::new();
+        let mut result: Module<TypeExpression> = Module::new();
         let mut context: TypeContext<TypeAssignment> = parent_context.push();
         // Add type constructors into context
         for t in self.types.iter() {
@@ -320,7 +316,7 @@ impl Module<OptionalType> {
                         &deduced_fn.name,
                         &TypeAssignment::ToplevelFunction(
                             TypeVars::clone(&deduced_fn.type_vars),
-                            TypeExpression::clone(&deduced_fn.body.t.0),
+                            TypeExpression::clone(&deduced_fn.body.t),
                             ConstraintContext::clone(&deduced_fn.context),
                         ),
                     )
@@ -336,7 +332,7 @@ impl Module<OptionalType> {
     }
 }
 
-impl Module<FixedType> {
+impl Module<TypeExpression> {
     pub(super) fn deduce_kinds(&self) -> Result<TypeContext<KindExpression>, Error> {
         let toporder = self.build_types_top_order()?;
         let mut context: TypeContext<KindExpression> = TypeContext::new();
@@ -504,7 +500,7 @@ impl Expression<OptionalType> {
                                 solver.add_rule(my_var_index, te.remap_vars(allocator));
                                 for (t, p) in cc.c.iter() {
                                     let index = allocator.allocate(p);
-                                    let remapped_type = t.0.remap_vars(allocator);
+                                    let remapped_type = t.remap_vars(allocator);
                                     solver.add_rule(index, remapped_type);
                                     constraint_context.add(VariableType(index), p);
                                 }
@@ -734,7 +730,7 @@ impl ConstraintContext<OptionalType> {
 }
 
 impl Function<VariableType> {
-    fn apply_solution(self, solution: &Solution<AtomicType>) -> Result<Function<FixedType>, Error> {
+    fn apply_solution(self, solution: &Solution<AtomicType>) -> Result<Function<TypeExpression>, Error> {
         let new_constraint_context = self.context.translate_types(solution).check_and_reduce()?;
         Ok(Function {
             name: self.name,
@@ -747,11 +743,11 @@ impl Function<VariableType> {
 }
 // end assign_type_vars
 
-impl Lambda<FixedType> {
+impl Lambda<TypeExpression> {
     fn get_overall_type(&self) -> TypeExpression {
         TypeExpression::new_function(
-            TypeExpression::clone(&self.param.t.0),
-            TypeExpression::clone(&self.return_type.0),
+            TypeExpression::clone(&self.param.t),
+            TypeExpression::clone(&self.return_type),
         )
     }
 }
@@ -767,28 +763,28 @@ impl Lambda<VariableType> {
 
 // translate_types
 impl Lambda<VariableType> {
-    fn translate_types(self, solution: &Solution<AtomicType>) -> Lambda<FixedType> {
+    fn translate_types(self, solution: &Solution<AtomicType>) -> Lambda<TypeExpression> {
         Lambda {
             param: self.param.translate_types(solution),
             tail: Box::new(self.tail.translate_types(solution)),
-            return_type: FixedType(solution.translate_var_index(self.return_type.0)),
+            return_type: solution.translate_var_index(self.return_type.0),
             p: self.p,
         }
     }
 }
 
 impl Binding<VariableType> {
-    fn translate_types(self, solution: &Solution<AtomicType>) -> Binding<FixedType> {
+    fn translate_types(self, solution: &Solution<AtomicType>) -> Binding<TypeExpression> {
         Binding {
             name: self.name,
-            t: FixedType(solution.translate_var_index(self.t.0)),
+            t: solution.translate_var_index(self.t.0),
             p: self.p,
         }
     }
 }
 
 impl ExpressionVariant<VariableType> {
-    fn translate_types(self, solution: &Solution<AtomicType>) -> ExpressionVariant<FixedType> {
+    fn translate_types(self, solution: &Solution<AtomicType>) -> ExpressionVariant<TypeExpression> {
         use ExpressionVariant::*;
         match self {
             Application(a, b) => Application(
@@ -812,9 +808,9 @@ impl ExpressionVariant<VariableType> {
 }
 
 impl Expression<VariableType> {
-    fn translate_types(self, solution: &Solution<AtomicType>) -> Expression<FixedType> {
+    fn translate_types(self, solution: &Solution<AtomicType>) -> Expression<TypeExpression> {
         Expression {
-            t: FixedType(solution.translate_var_index(self.t.0)),
+            t: solution.translate_var_index(self.t.0),
             p: self.p,
             e: self.e.translate_types(solution),
         }
@@ -822,7 +818,7 @@ impl Expression<VariableType> {
 }
 
 impl Case<VariableType> {
-    fn translate_types(self, solution: &Solution<AtomicType>) -> Case<FixedType> {
+    fn translate_types(self, solution: &Solution<AtomicType>) -> Case<TypeExpression> {
         Case {
             tc: self.tc,
             params: self
@@ -836,12 +832,12 @@ impl Case<VariableType> {
     }
 }
 impl ConstraintContext<VariableType> {
-    fn translate_types(self, solution: &Solution<AtomicType>) -> ConstraintContext<FixedType> {
+    fn translate_types(self, solution: &Solution<AtomicType>) -> ConstraintContext<TypeExpression> {
         ConstraintContext {
             c: self
                 .c
                 .into_iter()
-                .map(|(t, p)| (FixedType(solution.translate_var_index(t.0)), p))
+                .map(|(t, p)| (solution.translate_var_index(t.0), p))
                 .collect(),
         }
     }
@@ -871,21 +867,21 @@ fn check_kind_of_type(
     check_kinds_eq(my_kind, KindExpression::TYPE, p)
 }
 
-impl Function<FixedType> {
+impl Function<TypeExpression> {
     fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
         self.body.check_kinds(context)?;
         self.context.check_kinds(context)
     }
 }
 
-impl Expression<FixedType> {
+impl Expression<TypeExpression> {
     fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
-        check_kind_of_type(&self.t.0, context, &self.p)?;
+        check_kind_of_type(&self.t, context, &self.p)?;
         self.e.check_kinds(context)
     }
 }
 
-impl ExpressionVariant<FixedType> {
+impl ExpressionVariant<TypeExpression> {
     fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
         use ExpressionVariant::*;
         match self {
@@ -911,7 +907,7 @@ impl ExpressionVariant<FixedType> {
     }
 }
 
-impl Case<FixedType> {
+impl Case<TypeExpression> {
     fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
         for b in self.params.iter() {
             b.check_kinds(context)?;
@@ -920,25 +916,25 @@ impl Case<FixedType> {
     }
 }
 
-impl Lambda<FixedType> {
+impl Lambda<TypeExpression> {
     fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
         self.param.check_kinds(context)?;
-        check_kind_of_type(&self.return_type.0, context, &self.p)?;
+        check_kind_of_type(&self.return_type, context, &self.p)?;
         self.tail.check_kinds(context)
     }
 }
 
-impl Binding<FixedType> {
+impl Binding<TypeExpression> {
     fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
-        check_kind_of_type(&self.t.0, context, &self.p)
+        check_kind_of_type(&self.t, context, &self.p)
     }
 }
 
-impl ConstraintContext<FixedType> {
+impl ConstraintContext<TypeExpression> {
     fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
         for (t, p) in self.c.iter() {
             let kind =
-                t.0.get_kind(context)
+                t.get_kind(context)
                     .map_err(|c| Error::new(c, Position::clone(p)))?;
             check_kinds_eq(kind, KindExpression::CONSTRAINT, p)?;
         }
@@ -947,12 +943,12 @@ impl ConstraintContext<FixedType> {
 }
 // end check_kinds
 
-impl Expression<FixedType> {
-    pub(super) fn new(e: ExpressionVariant<FixedType>, p: Position, t: TypeExpression) -> Self {
+impl Expression<TypeExpression> {
+    pub(super) fn new(e: ExpressionVariant<TypeExpression>, p: Position, t: TypeExpression) -> Self {
         Self {
             e,
             p,
-            t: FixedType(t),
+            t,
         }
     }
 }
@@ -1065,16 +1061,15 @@ where
     }
 }
 
-impl ConstraintContext<FixedType> {
+impl ConstraintContext<TypeExpression> {
     pub(super) fn check_and_reduce(self) -> Result<Self, Error> {
         let mut result = Self::new();
         for (t, p) in self.c.into_iter() {
             match t
-                .0
                 .check_constraint()
                 .map_err(|c| Error::new(c, Position::clone(&p)))?
             {
-                Some(t) => result.add_unique(FixedType(t), &p),
+                Some(t) => result.add_unique(t, &p),
                 None => (),
             }
         }
@@ -1101,9 +1096,9 @@ impl PrefixFormatter for VariableType {
     }
 }
 
-impl PrefixFormatter for FixedType {
+impl PrefixFormatter for TypeExpression {
     fn write_with_prefix(&self, f: &mut fmt::Formatter<'_>, prefix: &str) -> fmt::Result {
-        write!(f, "{}[{}]", prefix, self.0)
+        write!(f, "{}[{}]", prefix, self)
     }
 }
 

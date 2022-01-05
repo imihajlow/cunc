@@ -1,7 +1,6 @@
 use super::name_context::TypeContext;
 use super::type_info::{TypeExpression, TypeVars};
 use super::ast::ConstraintContext;
-use super::ast::FixedType;
 use super::ast::TypeAssignment;
 use super::type_info::AtomicType;
 use crate::position::Position;
@@ -16,9 +15,9 @@ pub(super) fn create_default_context() -> TypeContext<'static, TypeAssignment> {
                 TypeExpression::Var(0),
                 TypeExpression::Var(0))),
         ConstraintContext::new_from_vec(vec![
-            (FixedType(TypeExpression::Composite(
+            (TypeExpression::Composite(
                 Box::new(TypeExpression::Atomic(AtomicType::Num)),
-                Box::new(TypeExpression::Var(0)))),
+                Box::new(TypeExpression::Var(0))),
             Position::Builtin)
         ]))).unwrap();
 
@@ -30,9 +29,9 @@ pub(super) fn create_default_context() -> TypeContext<'static, TypeAssignment> {
                 TypeExpression::Var(0),
                 TypeExpression::Var(0))),
         ConstraintContext::new_from_vec(vec![
-            (FixedType(TypeExpression::Composite(
+            (TypeExpression::Composite(
                 Box::new(TypeExpression::Atomic(AtomicType::Num)),
-                Box::new(TypeExpression::Var(0)))),
+                Box::new(TypeExpression::Var(0))),
             Position::Builtin)
         ]))).unwrap();
 
@@ -44,9 +43,9 @@ pub(super) fn create_default_context() -> TypeContext<'static, TypeAssignment> {
                 TypeExpression::Var(0),
                 TypeExpression::Var(0))),
         ConstraintContext::new_from_vec(vec![
-            (FixedType(TypeExpression::Composite(
+            (TypeExpression::Composite(
                 Box::new(TypeExpression::Atomic(AtomicType::Num)),
-                Box::new(TypeExpression::Var(0)))),
+                Box::new(TypeExpression::Var(0))),
             Position::Builtin)
         ]))).unwrap();
 
@@ -58,9 +57,9 @@ pub(super) fn create_default_context() -> TypeContext<'static, TypeAssignment> {
                 TypeExpression::Var(0),
                 TypeExpression::Var(0))),
         ConstraintContext::new_from_vec(vec![
-            (FixedType(TypeExpression::Composite(
+            (TypeExpression::Composite(
                 Box::new(TypeExpression::Atomic(AtomicType::Num)),
-                Box::new(TypeExpression::Var(0)))),
+                Box::new(TypeExpression::Var(0))),
             Position::Builtin)
         ]))).unwrap();
 
@@ -72,9 +71,9 @@ pub(super) fn create_default_context() -> TypeContext<'static, TypeAssignment> {
                 TypeExpression::Var(0),
                 TypeExpression::Var(0))),
         ConstraintContext::new_from_vec(vec![
-            (FixedType(TypeExpression::Composite(
+            (TypeExpression::Composite(
                 Box::new(TypeExpression::Atomic(AtomicType::Num)),
-                Box::new(TypeExpression::Var(0)))),
+                Box::new(TypeExpression::Var(0))),
             Position::Builtin)
         ]))).unwrap();
     
@@ -84,13 +83,13 @@ pub(super) fn create_default_context() -> TypeContext<'static, TypeAssignment> {
             TypeExpression::Var(0),
             TypeExpression::Var(1)),
         ConstraintContext::new_from_vec(vec![
-            (FixedType(TypeExpression::Composite(
+            (TypeExpression::Composite(
                 Box::new(TypeExpression::Atomic(AtomicType::Num)),
-                Box::new(TypeExpression::Var(0)))),
+                Box::new(TypeExpression::Var(0))),
             Position::Builtin),
-            (FixedType(TypeExpression::Composite(
+            (TypeExpression::Composite(
                 Box::new(TypeExpression::Atomic(AtomicType::Num)),
-                Box::new(TypeExpression::Var(1)))),
+                Box::new(TypeExpression::Var(1))),
             Position::Builtin),
         ]))).unwrap();
     context
