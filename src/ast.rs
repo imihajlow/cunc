@@ -38,14 +38,14 @@ pub struct VariableType(pub usize);
 #[derive(Debug, Clone, PartialEq)]
 pub struct FixedType(pub TypeExpression);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Expression<Type> {
     pub t: Type,
     pub e: ExpressionVariant<Type>,
     pub p: Position,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ExpressionVariant<Type> {
     Application(Box<Expression<Type>>, Box<Expression<Type>>),
     IntConstant(u64),
@@ -55,7 +55,7 @@ pub enum ExpressionVariant<Type> {
     Pmatch(Box<Expression<Type>>, Vec<Case<Type>>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Case<Type> {
     tc: TypeConstructor,
     params: Vec<Binding<Type>>,
@@ -63,7 +63,7 @@ pub struct Case<Type> {
     p: Position,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Lambda<Type> {
     param: Binding<Type>,
     return_type: Type,
@@ -71,14 +71,14 @@ pub struct Lambda<Type> {
     p: Position,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Binding<Type> {
     name: String,
     t: Type,
     p: Position,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Function<Type> {
     name: String,
     context: ConstraintContext<Type>,
@@ -87,18 +87,18 @@ pub struct Function<Type> {
     p: Position,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Module<Type> {
     functions: Vec<Function<Type>>,
     types: Vec<SumType>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConstraintContext<Type> {
     c: Vec<(Type, Position)>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeConstructor {
     pub name: String,
     pub enum_index: usize,
@@ -108,7 +108,7 @@ pub struct TypeConstructor {
     p: Position,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SumType {
     pub name: String,
     pub arity: usize,
@@ -982,6 +982,20 @@ impl Expression<VariableType> {
             e,
             p,
             t: VariableType(index),
+        }
+    }
+}
+
+impl<Type> Expression<Type> {
+    pub fn into_application_vec(self) -> Vec<Self> {
+        use ExpressionVariant::*;
+        match self.e {
+            Application(a, b) => {
+                let mut v = a.into_application_vec();
+                v.push(*b);
+                v
+            }
+            _ => vec![self]
         }
     }
 }

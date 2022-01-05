@@ -28,7 +28,7 @@ fn_decl = {
     lc_ident ~
     fn_param_idents ~
     "=" ~
-    expression ~
+    op_expression ~
     "."
 }
 
@@ -64,28 +64,40 @@ var_type_spec = {
 }
 
 assignment = {
-    "let" ~ lc_ident ~ var_type_spec? ~ "=" ~ expression ~ ";" ~ expression
+    "let" ~ lc_ident ~ var_type_spec? ~ "=" ~ op_expression ~ ";" ~ op_expression
 }
 
 expression = {
     pmatch |
     assignment |
     application |
-    ("{" ~ expression ~ "}")
+    ("(" ~ op_expression ~ ")")
 }
+
+op_expression = {
+    expression ~ (operator ~ expression)*
+}
+
+operator = _{ op_add | op_sub | op_mul | op_div | op_mod }
+
+op_add = { "+" }
+op_sub = { "-" }
+op_mul = { "*" }
+op_div = { "/" }
+op_mod = { "%" }
 
 application = {
     part+
 }
 
 pmatch = {
-    "match" ~ expression ~ "{"
+    "match" ~ op_expression ~ "{"
     ~ case+
     ~ "}"
 }
 
 case = {
-    pattern ~ "=>" ~ expression ~ ","
+    pattern ~ "=>" ~ op_expression ~ ","
 }
 
 pattern = {
@@ -96,7 +108,7 @@ part = _{
     constant |
     lc_ident |
     uc_ident |
-    "(" ~ expression ~ ")"
+    "(" ~ op_expression ~ ")"
 }
 
 constant = _{

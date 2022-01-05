@@ -6,6 +6,9 @@ use crate::{ast::*, error::ErrorCause};
 use itertools::Itertools;
 use pest::iterators::Pair;
 use pest::iterators::Pairs;
+use pest::prec_climber::Assoc;
+use pest::prec_climber::Operator;
+use pest::prec_climber::PrecClimber;
 use pest::Parser;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -210,7 +213,7 @@ fn parse_expression(
             let mut collected_expr: Option<Expression<OptionalType>> = None;
             for part in pair.into_inner() {
                 let part_position = position_from_span(&part.as_span());
-                let parsed_part: Expression<OptionalType> = if let Rule::expression = part.as_rule()
+                let parsed_part: Expression<OptionalType> = if let Rule::op_expression = part.as_rule()
                 {
                     parse_expression(part, tva, tc_map)?
                 } else {
@@ -227,7 +230,7 @@ fn parse_expression(
                         Rule::bin_constant => {
                             ExpressionVariant::IntConstant(parse_bin_constant(part)?)
                         }
-                        _ => unreachable!(),
+                        _ => unreachable!("{}", part),
                     };
                     Expression::<OptionalType>::new(parsed_part, part_position, None)
                 };
@@ -249,18 +252,18 @@ fn parse_expression(
                 match next.as_rule() {
                     Rule::var_type_spec => {
                         let e_pair = inner.next().unwrap();
-                        assert!(e_pair.as_rule() == Rule::expression);
+                        assert!(e_pair.as_rule() == Rule::op_expression);
                         (
                             Some(parse_type(next, tva)?),
                             parse_expression(e_pair, tva, tc_map)?,
                         )
                     }
-                    Rule::expression => (None, parse_expression(next, tva, tc_map)?),
+                    Rule::op_expression => (None, parse_expression(next, tva, tc_map)?),
                     _ => unreachable!(),
                 }
             };
             let body_pair = inner.next().unwrap();
-            assert!(body_pair.as_rule() == Rule::expression);
+            assert!(body_pair.as_rule() == Rule::op_expression);
             let body = parse_expression(body_pair, tva, tc_map)?;
             let binding: Binding<OptionalType> =
                 Binding::new(name, OptionalType(var_type_spec), name_pos);
@@ -277,6 +280,39 @@ fn parse_expression(
             }
             let ev = ExpressionVariant::Pmatch(Box::new(expr), cases);
             Ok(Expression::<OptionalType>::new(ev, pos, None))
+        }
+        Rule::op_expression => {
+            let climber = PrecClimber::new(vec![
+                Operator::new(Rule::op_add, Assoc::Left) | Operator::new(Rule::op_sub, Assoc::Left),
+                Operator::new(Rule::op_mul, Assoc::Left)
+                    | Operator::new(Rule::op_div, Assoc::Left)
+                    | Operator::new(Rule::op_mod, Assoc::Left),
+            ]);
+            let primary = |p| parse_expression(p, tva, tc_map);
+            let infix = |lhs: Result<Expression<OptionalType>, Error>,
+                         op: Pair<Rule>,
+                         rhs: Result<Expression<OptionalType>, Error>|
+             -> Result<Expression<OptionalType>, Error> {
+                let lhs_ok = lhs?;
+                let rhs_ok = rhs?;
+                let op_name = match op.as_rule() {
+                    Rule::op_add => "__add__",
+                    Rule::op_sub => "__sub__",
+                    Rule::op_mul => "__mul__",
+                    Rule::op_div => "__div__",
+                    Rule::op_mod => "__mod__",
+                    _ => unreachable!(),
+                };
+                let op_ev = ExpressionVariant::<OptionalType>::Variable(op_name.to_string());
+                let op_pos = position_from_span(&op.as_span());
+                let op_expr = Expression::<OptionalType>::new(op_ev, op_pos, None);
+                let op = Expression::new_application(
+                    Expression::new_application(op_expr, lhs_ok),
+                    rhs_ok,
+                );
+                Ok(op)
+            };
+            climber.climb(pair.into_inner(), primary, infix)
         }
         _ => unreachable!(),
     }
@@ -312,7 +348,7 @@ fn parse_case(
         })
         .collect();
     let body_p = inner.next().unwrap();
-    assert_eq!(body_p.as_rule(), Rule::expression);
+    assert_eq!(body_p.as_rule(), Rule::op_expression);
     let body = parse_expression(body_p, tva, tc_map)?;
 
     Ok(Case::<OptionalType>::new(
@@ -568,9 +604,39 @@ mod tests {
         let parent_type = &tc.parent_type;
         let parent_type_expected: TypeExpression = TypeExpression::new_composite(
             TypeExpression::new_composite(Atomic(AtomicType::User("Toto".to_string())), Var(0)),
-            Var(1));
+            Var(1),
+        );
         assert_eq!(parent_type, &parent_type_expected);
         assert_eq!(tc.params.len(), 1);
-        assert_eq!(tc.params.last().unwrap(), &TypeExpression::new_composite(Var(1), Var(0)));
+        assert_eq!(
+            tc.params.last().unwrap(),
+            &TypeExpression::new_composite(Var(1), Var(0))
+        );
+    }
+
+    #[test]
+    fn test_op_expr() {
+        let code = "a + b * c - d";
+        let root = CuncParser::parse(Rule::op_expression, &code)
+            .unwrap() // Pairs
+            .next()
+            .unwrap(); // Pair
+        let mut tva = TypeVarAllocator::new();
+        tva.disallow_new_vars();
+        let tc_map: TcMap = HashMap::new();
+        let expr = parse_expression(root, &mut tva, &tc_map).unwrap();
+        let mut lvl1 = expr.into_application_vec();
+        assert_eq!(lvl1.len(), 3);
+        assert_eq!(lvl1[0].e, ExpressionVariant::<OptionalType>::Variable("__sub__".to_string()));
+        assert_eq!(lvl1[2].e, ExpressionVariant::<OptionalType>::Variable("d".to_string()));
+        let mut lvl2 = lvl1.drain(1..2).next().unwrap().into_application_vec();
+        assert_eq!(lvl2.len(), 3);
+        assert_eq!(lvl2[0].e, ExpressionVariant::<OptionalType>::Variable("__add__".to_string()));
+        assert_eq!(lvl2[1].e, ExpressionVariant::<OptionalType>::Variable("a".to_string()));
+        let lvl3 = lvl2.drain(2..).next().unwrap().into_application_vec();
+        assert_eq!(lvl3.len(), 3);
+        assert_eq!(lvl3[0].e, ExpressionVariant::<OptionalType>::Variable("__mul__".to_string()));
+        assert_eq!(lvl3[1].e, ExpressionVariant::<OptionalType>::Variable("b".to_string()));
+        assert_eq!(lvl3[2].e, ExpressionVariant::<OptionalType>::Variable("c".to_string()));
     }
 }

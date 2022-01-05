@@ -56,7 +56,7 @@ pub enum CompositeExpression<AT> {
     Composite(Box<Self>, Box<Self>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeVars {
     range: usize,
 }

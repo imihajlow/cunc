@@ -2,7 +2,7 @@ use std::fmt;
 
 use pest::error::LineColLocation;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Position {
     Unknown,
     Builtin,

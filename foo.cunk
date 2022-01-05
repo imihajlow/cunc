@@ -15,3 +15,7 @@ y = match x {
     Nothing => 0,
   },
 }.
+
+inc x = x + 1.
+
+sumsq x y = x * x + y * y.
