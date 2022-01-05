@@ -8,7 +8,6 @@ mod util;
 mod graph;
 mod name_context;
 mod type_var_allocator;
-// mod type_constraint;
 use crate::ast::Module;
 use crate::error::Error;
 use crate::ast::FixedType;
@@ -22,7 +21,6 @@ use ast::ConstraintContext;
 use type_info::AtomicType;
 #[macro_use]
 extern crate pest_derive;
-// use crate::parse::parse;
 
 fn create_default_context() -> TypeContext<'static, TypeAssignment> {
     let mut context: TypeContext<TypeAssignment> = TypeContext::new();
