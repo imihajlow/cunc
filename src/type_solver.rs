@@ -1,15 +1,14 @@
-use crate::error::Mismatchable;
-use crate::util::max_options;
-use crate::position::Position;
 use crate::error::Error;
 use crate::error::ErrorCause;
+use crate::error::Mismatchable;
+use crate::position::Position;
+use crate::type_info::{CompositeExpression, TypeExpression};
 use crate::type_var_allocator::TypeVarAllocator;
+use crate::util::max_options;
+use crate::util::var_from_number;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
-use crate::type_info::{TypeExpression, CompositeExpression};
-use crate::util::var_from_number;
-
 
 pub struct Solver<AT> {
     rules: Vec<Vec<CompositeExpression<AT>>>,
@@ -24,14 +23,17 @@ pub enum SolveError {
 impl SolveError {
     pub fn as_error(self, allocator: &TypeVarAllocator) -> Error {
         match self {
-            Self::RuleError(n, c) =>
-                Error::new(c, Position::clone(allocator.get_position(n))),
+            Self::RuleError(n, c) => Error::new(c, Position::clone(allocator.get_position(n))),
         }
     }
 }
 
 impl<AT: Clone + PartialEq> Solver<AT>
-where CompositeExpression<AT>: Mismatchable, AT: fmt::Display, CompositeExpression<AT>: fmt::Display {
+where
+    CompositeExpression<AT>: Mismatchable,
+    AT: fmt::Display,
+    CompositeExpression<AT>: fmt::Display,
+{
     pub fn new() -> Self {
         Self {
             rules: Vec::new(),
@@ -64,11 +66,13 @@ where CompositeExpression<AT>: Mismatchable, AT: fmt::Display, CompositeExpressi
                 println!("{}\n", &self);
             }
             let current_var = to_process.pop().unwrap();
-            if !self.rules[current_var].is_empty() {
+            let current_rules = &mut self.rules[current_var];
+            // Delete rules like "x = x"
+            current_rules.retain(|rule| rule != &CompositeExpression::Var(current_var));
+            if !current_rules.is_empty() {
                 // If there are multiple rules for once variable,
                 // match them together to produce new rules,
                 // removing all original rules but one.
-                let current_rules = &mut self.rules[current_var];
                 let rest = current_rules.split_off(1);
                 let pivot_rule = CompositeExpression::clone(current_rules.first().unwrap());
                 let mut new_rules: Vec<(usize, CompositeExpression<AT>)> = Vec::new();
@@ -139,7 +143,9 @@ where CompositeExpression<AT>: Mismatchable, AT: fmt::Display, CompositeExpressi
 }
 
 impl<AT: fmt::Display> fmt::Display for Solver<AT>
-where CompositeExpression<AT>: std::fmt::Display {
+where
+    CompositeExpression<AT>: std::fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (v, rules) in self.rules.iter().enumerate() {
             for t in rules.iter() {
@@ -152,20 +158,18 @@ where CompositeExpression<AT>: std::fmt::Display {
 }
 
 /// Match two type expressions and produce new type rules resulting from their equality.
-fn match_rules<AT: PartialEq + Clone>(pivot: &CompositeExpression<AT>, other: &CompositeExpression<AT>)
-        -> Result<Vec<(usize, CompositeExpression<AT>)>, ErrorCause>
-    where CompositeExpression<AT>: Mismatchable {
+fn match_rules<AT: PartialEq + Clone>(
+    pivot: &CompositeExpression<AT>,
+    other: &CompositeExpression<AT>,
+) -> Result<Vec<(usize, CompositeExpression<AT>)>, ErrorCause>
+where
+    CompositeExpression<AT>: Mismatchable,
+{
     use CompositeExpression::*;
     match (pivot, other) {
-        (Var(n), Var(m)) if n == m => {
-            Ok(Vec::new())
-        }
-        (Var(n), t) => {
-            Ok(vec![(*n, CompositeExpression::clone(&t))])
-        }
-        (t, Var(n)) => {
-            Ok(vec![(*n, CompositeExpression::clone(&t))])
-        }
+        (Var(n), Var(m)) if n == m => Ok(Vec::new()),
+        (Var(n), t) => Ok(vec![(*n, CompositeExpression::clone(&t))]),
+        (t, Var(n)) => Ok(vec![(*n, CompositeExpression::clone(&t))]),
         (Atomic(a), Atomic(b)) => {
             if a == b {
                 Ok(Vec::new())
@@ -173,12 +177,8 @@ fn match_rules<AT: PartialEq + Clone>(pivot: &CompositeExpression<AT>, other: &C
                 Err(pivot.new_types_mismatch_error(other))
             }
         }
-        (Atomic(_), Composite(_, _)) => {
-            Err(pivot.new_types_mismatch_error(other))
-        }
-        (Composite(_, _), Atomic(_)) => {
-            Err(pivot.new_types_mismatch_error(other))
-        }
+        (Atomic(_), Composite(_, _)) => Err(pivot.new_types_mismatch_error(other)),
+        (Composite(_, _), Atomic(_)) => Err(pivot.new_types_mismatch_error(other)),
         (Composite(h1, t1), Composite(h2, t2)) => {
             let mut result = match_rules(h1, h2)?;
             result.extend(match_rules(t1, t2)?);
@@ -196,7 +196,7 @@ impl<AT: Clone> Solution<AT> {
     fn new(rules: Vec<CompositeExpression<AT>>, free_vars_count: usize) -> Self {
         Self {
             rules,
-            free_vars_count
+            free_vars_count,
         }
     }
 
@@ -205,10 +205,10 @@ impl<AT: Clone> Solution<AT> {
         match t {
             Atomic(_) => t,
             Var(n) => CompositeExpression::clone(&self.rules[n]),
-            Composite(h, t) =>
-                Composite(
-                    Box::new(self.translate_type(*h)),
-                    Box::new(self.translate_type(*t)))
+            Composite(h, t) => Composite(
+                Box::new(self.translate_type(*h)),
+                Box::new(self.translate_type(*t)),
+            ),
         }
     }
 
@@ -222,7 +222,9 @@ impl<AT: Clone> Solution<AT> {
 }
 
 impl<AT: fmt::Display> fmt::Display for Solution<AT>
-where CompositeExpression<AT>: fmt::Display {
+where
+    CompositeExpression<AT>: fmt::Display,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (v, rule) in self.rules.iter().enumerate() {
             writeln!(f, "{} = {}", var_from_number(v), rule)?;
@@ -233,7 +235,7 @@ where CompositeExpression<AT>: fmt::Display {
 
 #[cfg(test)]
 mod tests {
-    use crate::type_info::{AtomicType, IntType, IntBits};
+    use crate::type_info::{AtomicType, IntBits, IntType};
 
     use super::*;
 
@@ -262,40 +264,36 @@ mod tests {
             let x[e] = sum[f] a[b] b[c]
             sum[f] x[e] c[d] -> g
         */
-        
+
         use CompositeExpression::*;
         // 0 = 1 -> 2 -> 3 -> 7
-        solver.add_rule(0, TypeExpression::new_function(
-            Var(1),
+        solver.add_rule(
+            0,
             TypeExpression::new_function(
-                Var(2),
-                TypeExpression::new_function(
-                    Var(3),
-                    Var(7)))));
+                Var(1),
+                TypeExpression::new_function(Var(2), TypeExpression::new_function(Var(3), Var(7))),
+            ),
+        );
         // 5 = 1 -> 2 -> 4
-        solver.add_rule(5, TypeExpression::new_function(
-            Var(1),
-            TypeExpression::new_function(
-                Var(2),
-                Var(4))));
+        solver.add_rule(
+            5,
+            TypeExpression::new_function(Var(1), TypeExpression::new_function(Var(2), Var(4))),
+        );
         // 5 = 8 -> 8 -> 8
-        solver.add_rule(5, TypeExpression::new_function(
-            Var(8),
-            TypeExpression::new_function(
-                Var(8),
-                Var(8))));
+        solver.add_rule(
+            5,
+            TypeExpression::new_function(Var(8), TypeExpression::new_function(Var(8), Var(8))),
+        );
         // 6 = 4 -> 3 -> 7
-        solver.add_rule(6, TypeExpression::new_function(
-            Var(4),
-            TypeExpression::new_function(
-                Var(3),
-                Var(7))));
+        solver.add_rule(
+            6,
+            TypeExpression::new_function(Var(4), TypeExpression::new_function(Var(3), Var(7))),
+        );
         // 6 = 9 -> 9 -> 9
-        solver.add_rule(6, TypeExpression::new_function(
-            Var(9),
-            TypeExpression::new_function(
-                Var(9),
-                Var(9))));
+        solver.add_rule(
+            6,
+            TypeExpression::new_function(Var(9), TypeExpression::new_function(Var(9), Var(9))),
+        );
         let solution = solver.solve();
         assert!(solution.is_ok());
         assert!(solution.unwrap().get_free_vars_count() == 1);
@@ -314,37 +312,45 @@ mod tests {
         use crate::type_info;
         use CompositeExpression::*;
         // 0 = 1 -> 2 -> 3 -> 7
-        solver.add_rule(0, TypeExpression::new_function(
-            Var(1),
+        solver.add_rule(
+            0,
             TypeExpression::new_function(
-                Var(2),
-                TypeExpression::new_function(
-                    Var(3),
-                    Var(7)))));
+                Var(1),
+                TypeExpression::new_function(Var(2), TypeExpression::new_function(Var(3), Var(7))),
+            ),
+        );
         // 5 = 1 -> 2 -> 4
-        solver.add_rule(5, TypeExpression::new_function(
-            Var(1),
-            TypeExpression::new_function(
-                Var(2),
-                Var(4))));
+        solver.add_rule(
+            5,
+            TypeExpression::new_function(Var(1), TypeExpression::new_function(Var(2), Var(4))),
+        );
         // 5 = U8 -> U8 -> U8
-        solver.add_rule(5, TypeExpression::new_function(
-            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+        solver.add_rule(
+            5,
             TypeExpression::new_function(
                 Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-                Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))))));
+                TypeExpression::new_function(
+                    Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+                    Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+                ),
+            ),
+        );
         // 6 = 4 -> 3 -> 7
-        solver.add_rule(6, TypeExpression::new_function(
-            Var(4),
-            TypeExpression::new_function(
-                Var(3),
-                Var(7))));
+        solver.add_rule(
+            6,
+            TypeExpression::new_function(Var(4), TypeExpression::new_function(Var(3), Var(7))),
+        );
         // 6 = U8 -> U8 -> U8
-        solver.add_rule(6, TypeExpression::new_function(
-            Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+        solver.add_rule(
+            6,
             TypeExpression::new_function(
                 Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
-                Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))))));
+                TypeExpression::new_function(
+                    Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+                    Atomic(type_info::AtomicType::Int(IntType::new(false, IntBits::B8))),
+                ),
+            ),
+        );
         let solution = solver.solve();
         assert!(solution.is_ok());
         assert!(solution.unwrap().get_free_vars_count() == 0);
