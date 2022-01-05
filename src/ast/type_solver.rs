@@ -2,26 +2,26 @@ use crate::error::Error;
 use crate::error::ErrorCause;
 use crate::error::Mismatchable;
 use crate::position::Position;
-use crate::type_info::{CompositeExpression, TypeExpression};
-use crate::type_var_allocator::TypeVarAllocator;
+use super::type_info::{CompositeExpression, TypeExpression};
+use super::type_var_allocator::TypeVarAllocator;
 use crate::util::max_options;
 use crate::util::var_from_number;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 
-pub struct Solver<AT> {
+pub(super) struct Solver<AT> {
     rules: Vec<Vec<CompositeExpression<AT>>>,
     verbose: bool,
 }
 
 #[derive(Debug)]
-pub enum SolveError {
+pub(super) enum SolveError {
     RuleError(usize, ErrorCause),
 }
 
 impl SolveError {
-    pub fn as_error(self, allocator: &TypeVarAllocator) -> Error {
+    pub(super) fn as_error(self, allocator: &TypeVarAllocator) -> Error {
         match self {
             Self::RuleError(n, c) => Error::new(c, Position::clone(allocator.get_position(n))),
         }
@@ -187,7 +187,7 @@ where
     }
 }
 
-pub struct Solution<AT> {
+pub(super) struct Solution<AT> {
     rules: Vec<CompositeExpression<AT>>,
     free_vars_count: usize,
 }
@@ -235,7 +235,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::type_info::{AtomicType, IntBits, IntType};
+    use super::super::type_info::{AtomicType, IntBits, IntType};
 
     use super::*;
 
@@ -309,7 +309,7 @@ mod tests {
             let x[e] = sum[f] a[b] b[c]
             sum[f] x[e] c[d] -> g
         */
-        use crate::type_info;
+        use super::super::type_info;
         use CompositeExpression::*;
         // 0 = 1 -> 2 -> 3 -> 7
         solver.add_rule(

@@ -1,7 +1,7 @@
 use crate::position::Position;
-use crate::type_info::AtomicTypeParseError;
-use crate::type_info::KindExpression;
-use crate::type_info::TypeExpression;
+use crate::ast::type_info::AtomicTypeParseError;
+use crate::ast::type_info::KindExpression;
+use crate::ast::type_info::TypeExpression;
 use std::fmt;
 
 #[derive(Debug)]

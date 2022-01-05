@@ -1,17 +1,17 @@
 use crate::error::Error;
 use crate::error::ErrorCause;
 use crate::graph::ObjectGraph;
-use crate::name_context::NameContext;
-use crate::name_context::TypeContext;
+use super::name_context::NameContext;
+use super::name_context::TypeContext;
 use crate::position::Position;
-use crate::type_info::AtomicKind;
-use crate::type_info::AtomicType;
-use crate::type_info::KindExpression;
-use crate::type_info::TypeExpression;
-use crate::type_info::TypeVars;
-use crate::type_solver::Solution;
-use crate::type_solver::Solver;
-use crate::type_var_allocator::TypeVarAllocator;
+use super::type_info::AtomicKind;
+use super::type_info::AtomicType;
+use super::type_info::KindExpression;
+use super::type_info::TypeExpression;
+use super::type_info::TypeVars;
+use super::type_solver::Solution;
+use super::type_solver::Solver;
+use super::type_var_allocator::TypeVarAllocator;
 use crate::util::var_from_number;
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -28,11 +28,11 @@ use std::iter;
 
 /// Type which can be specified or not.
 #[derive(Debug, Clone, PartialEq)]
-pub struct OptionalType(pub Option<TypeExpression>);
+pub(super) struct OptionalType(pub Option<TypeExpression>);
 
 /// Type specified by a type variable.
 #[derive(Debug, Clone, PartialEq)]
-pub struct VariableType(pub usize);
+struct VariableType(pub usize);
 
 /// Known (maybe generic) type.
 #[derive(Debug, Clone, PartialEq)]
@@ -117,7 +117,7 @@ pub struct SumType {
 }
 
 impl<Type> Case<Type> {
-    pub fn new(
+    pub(super) fn new(
         tc: TypeConstructor,
         params: Vec<Binding<Type>>,
         body: Expression<Type>,
@@ -133,24 +133,24 @@ impl<Type> Case<Type> {
 }
 
 impl<Type> Module<Type> {
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             functions: Vec::new(),
             types: Vec::new(),
         }
     }
 
-    pub fn push_function(&mut self, f: Function<Type>) {
+    pub(super) fn push_function(&mut self, f: Function<Type>) {
         self.functions.push(f);
     }
 
-    pub fn push_type(&mut self, t: SumType) {
+    pub(super) fn push_type(&mut self, t: SumType) {
         self.types.push(t);
     }
 }
 
 impl TypeConstructor {
-    pub fn new(
+    pub(super) fn new(
         name: String,
         enum_index: usize,
         params: Vec<TypeExpression>,
@@ -168,7 +168,7 @@ impl TypeConstructor {
         }
     }
 
-    pub fn get_function_type(&self) -> (TypeVars, TypeExpression) {
+    pub(super) fn get_function_type(&self) -> (TypeVars, TypeExpression) {
         let mut parts = Vec::clone(&self.params);
         parts.push(TypeExpression::clone(&self.parent_type));
         (
@@ -179,7 +179,7 @@ impl TypeConstructor {
 }
 
 impl SumType {
-    pub fn new(
+    pub(super) fn new(
         name: String,
         arity: usize,
         constructors: Vec<TypeConstructor>,
@@ -196,7 +196,7 @@ impl SumType {
 
 impl<Type> Module<Type> {
     /// Build a graph of dependencies between functions.
-    pub fn build_dependency_graph(&self) -> ObjectGraph<String> {
+    fn build_dependency_graph(&self) -> ObjectGraph<String> {
         let mut context = NameContext::new();
         for function in self.functions.iter() {
             context.add_name(&function.name);
@@ -214,7 +214,7 @@ impl<Type> Module<Type> {
     }
 
     /// Build a graph of dependencies between custom types
-    pub fn build_types_top_order(&self) -> Result<Vec<SumType>, Error> {
+    fn build_types_top_order(&self) -> Result<Vec<SumType>, Error> {
         let mut context = NameContext::new();
         let mut type_by_name: HashMap<String, &SumType> = HashMap::new();
         for t in self.types.iter() {
@@ -263,7 +263,7 @@ impl TypeAssignment {
 }
 
 impl Module<OptionalType> {
-    pub fn deduce_types(
+    pub(super) fn deduce_types(
         &self,
         parent_context: &TypeContext<TypeAssignment>,
     ) -> Result<Module<FixedType>, Error> {
@@ -337,7 +337,7 @@ impl Module<OptionalType> {
 }
 
 impl Module<FixedType> {
-    pub fn deduce_kinds(&self) -> Result<TypeContext<KindExpression>, Error> {
+    pub(super) fn deduce_kinds(&self) -> Result<TypeContext<KindExpression>, Error> {
         let toporder = self.build_types_top_order()?;
         let mut context: TypeContext<KindExpression> = TypeContext::new();
         for t in toporder.into_iter() {
@@ -371,7 +371,7 @@ impl Module<FixedType> {
         Ok(context)
     }
 
-    pub fn check_kinds(&self) -> Result<(), Error> {
+    pub(super) fn check_kinds(&self) -> Result<(), Error> {
         let context = self.deduce_kinds()?;
         for f in self.functions.iter() {
             f.check_kinds(&context)?;
@@ -948,7 +948,7 @@ impl ConstraintContext<FixedType> {
 // end check_kinds
 
 impl Expression<FixedType> {
-    pub fn new(e: ExpressionVariant<FixedType>, p: Position, t: TypeExpression) -> Self {
+    pub(super) fn new(e: ExpressionVariant<FixedType>, p: Position, t: TypeExpression) -> Self {
         Self {
             e,
             p,
@@ -958,7 +958,7 @@ impl Expression<FixedType> {
 }
 
 impl Expression<OptionalType> {
-    pub fn new(e: ExpressionVariant<OptionalType>, p: Position, t: Option<TypeExpression>) -> Self {
+    pub(super) fn new(e: ExpressionVariant<OptionalType>, p: Position, t: Option<TypeExpression>) -> Self {
         Self {
             e,
             p,
@@ -977,7 +977,7 @@ impl Expression<OptionalType> {
 }
 
 impl Expression<VariableType> {
-    pub fn new(e: ExpressionVariant<VariableType>, p: Position, index: usize) -> Self {
+    pub(super) fn new(e: ExpressionVariant<VariableType>, p: Position, index: usize) -> Self {
         Self {
             e,
             p,
@@ -987,7 +987,7 @@ impl Expression<VariableType> {
 }
 
 impl<Type> Expression<Type> {
-    pub fn into_application_vec(self) -> Vec<Self> {
+    pub(super) fn into_application_vec(self) -> Vec<Self> {
         use ExpressionVariant::*;
         match self.e {
             Application(a, b) => {
@@ -1001,7 +1001,7 @@ impl<Type> Expression<Type> {
 }
 
 impl<Type> Function<Type> {
-    pub fn new(
+    pub(super) fn new(
         name: String,
         context: ConstraintContext<Type>,
         body: Expression<Type>,
@@ -1019,13 +1019,13 @@ impl<Type> Function<Type> {
 }
 
 impl<Type> Binding<Type> {
-    pub fn new(name: String, t: Type, p: Position) -> Self {
+    pub(super) fn new(name: String, t: Type, p: Position) -> Self {
         Self { name, t, p }
     }
 }
 
 impl<Type> Lambda<Type> {
-    pub fn new(
+    pub(super) fn new(
         param: Binding<Type>,
         return_type: Type,
         tail: Expression<Type>,
@@ -1041,15 +1041,15 @@ impl<Type> Lambda<Type> {
 }
 
 impl<Type> ConstraintContext<Type> {
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self { c: Vec::new() }
     }
 
-    pub fn new_from_vec(v: Vec<(Type, Position)>) -> Self {
+    pub(super) fn new_from_vec(v: Vec<(Type, Position)>) -> Self {
         Self { c: v }
     }
 
-    pub fn add(&mut self, t: Type, p: &Position) {
+    pub(super) fn add(&mut self, t: Type, p: &Position) {
         self.c.push((t, Position::clone(p)));
     }
 }
@@ -1058,7 +1058,7 @@ impl<Type> ConstraintContext<Type>
 where
     Type: PartialEq,
 {
-    pub fn add_unique(&mut self, t: Type, p: &Position) {
+    pub(super) fn add_unique(&mut self, t: Type, p: &Position) {
         if self.c.iter().find(|(c, p)| c == &t).is_none() {
             self.c.push((t, Position::clone(p)));
         }
@@ -1066,7 +1066,7 @@ where
 }
 
 impl ConstraintContext<FixedType> {
-    pub fn check_and_reduce(self) -> Result<Self, Error> {
+    pub(super) fn check_and_reduce(self) -> Result<Self, Error> {
         let mut result = Self::new();
         for (t, p) in self.c.into_iter() {
             match t
@@ -1254,7 +1254,7 @@ impl<Type: PrefixFormatter> fmt::Display for Module<Type> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::parse_str;
+    use super::super::parse::parse_str;
 
     #[test]
     fn test_deduce_kinds() {
@@ -1264,7 +1264,7 @@ mod tests {
         let kind_context = typed.deduce_kinds().unwrap();
         let toto_kind = kind_context.get("Toto").unwrap();
 
-        use crate::type_info::KindExpression;
+        use super::super::type_info::KindExpression;
         // * -> (* -> *) -> *
         let expected_toto_kind = KindExpression::mapping(
             KindExpression::TYPE,

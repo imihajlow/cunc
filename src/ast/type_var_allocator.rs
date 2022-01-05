@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use crate::position::Position;
 
 /// Allocates new type variables when assigning them to AST before type deduction.
-pub struct TypeVarAllocator {
+pub(super) struct TypeVarAllocator {
     cur_index: usize,
     offsets: Vec<usize>,
     position_by_index: HashMap<usize, Position>

@@ -5,7 +5,7 @@ use crate::error::{ErrorCause};
 
 /// Class to check if certain name is a toplevel function (participating in dependency graph) or not.
 /// This does not check for anything besides that.
-pub struct NameContext {
+pub(super) struct NameContext {
     names: Vec<HashSet<String>>
 }
 
@@ -34,7 +34,7 @@ impl NameContext {
 }
 
 /// Keeps track of arbitrary properties of variables.
-pub struct TypeContext<'a, T> where T: Clone {
+pub(super) struct TypeContext<'a, T> where T: Clone {
     parent: Option<&'a Self>,
     bindings: HashMap<String, T>
 }

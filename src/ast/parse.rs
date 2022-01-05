@@ -1,8 +1,9 @@
 use crate::error::Error;
 use crate::position::{position_from_linecol, position_from_span, Position};
-use crate::type_info::TypeVars;
-use crate::type_info::{AtomicType, TypeExpression};
-use crate::{ast::*, error::ErrorCause};
+use super::type_info::TypeVars;
+use super::type_info::{AtomicType, TypeExpression};
+use super::ast::*;
+use crate::error::ErrorCause;
 use itertools::Itertools;
 use pest::iterators::Pair;
 use pest::iterators::Pairs;
@@ -19,12 +20,12 @@ pub struct CuncParser;
 
 type TcMap = HashMap<String, TypeConstructor>;
 
-pub fn parse_file(fname: &str) -> Result<Module<OptionalType>, Error> {
+pub(super) fn parse_file(fname: &str) -> Result<Module<OptionalType>, Error> {
     let code = std::fs::read_to_string(&fname).unwrap();
     parse_str(&code)
 }
 
-pub fn parse_str(code: &str) -> Result<Module<OptionalType>, Error> {
+pub(super) fn parse_str(code: &str) -> Result<Module<OptionalType>, Error> {
     let root = match CuncParser::parse(Rule::main, &code) {
         Ok(ast) => ast,
         Err(e) => {
@@ -544,7 +545,7 @@ fn parse_type_definition(mut inner: Pairs<Rule>, tc_map: &mut TcMap) -> Result<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::type_info::{CompositeExpression, TypeExpression};
+    use super::super::type_info::{CompositeExpression, TypeExpression};
 
     #[test]
     fn test_fn_type1() {
