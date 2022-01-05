@@ -80,6 +80,7 @@ pub enum AtomicType {
     Function,
     Num,
     User(String),
+    Unique,
 }
 
 #[derive(Debug)]
@@ -146,6 +147,10 @@ impl TypeExpression {
 
     pub fn new_function_from_vec(v: Vec<Self>) -> Self {
         Self::new_transformation_chain(v, AtomicType::Function)
+    }
+
+    pub fn new_unique(inner: Self) -> Self {
+        Self::new_composite(TypeExpression::Atomic(AtomicType::Unique), inner)
     }
 
     pub fn match_function<'a>(&'a self) -> Option<(&'a Self, &'a Self)> {
@@ -383,6 +388,11 @@ impl AtomicType {
                 .get(s)
                 .map(|e| KindExpression::clone(e))
                 .ok_or(ErrorCause::UnknownIdentifier(s.to_string())),
+            // * -> *
+            Unique => Ok(KindExpression::mapping(
+                KindExpression::Atomic(AtomicKind::Type),
+                KindExpression::Atomic(AtomicKind::Type),
+            )),
         }
     }
 }
@@ -428,10 +438,17 @@ impl fmt::Display for TypeExpression {
             Atomic(t) => write!(f, "{}", t),
             Var(n) => f.write_str(&var_from_number(*n)),
             Composite(a, b) => match **a {
-                Atomic(AtomicType::Function) => match **b {
+                Atomic(AtomicType::Function) => match &**b {
                     Atomic(_) | Var(_) => write!(f, "{} ->", b),
-                    Composite(_, _) => write!(f, "({}) ->", b),
-                },
+                    Composite(op, _) => match &**op {
+                        Atomic(AtomicType::Unique) => write!(f, "{} ->", b),
+                        _ => write!(f, "({}) ->", b),
+                    }
+                }
+                Atomic(AtomicType::Unique) => match &**b {
+                    Atomic(_) | Var(_) => write!(f, "*{}", b),
+                    Composite(_, _) => write!(f, "*({})", b),
+                }
                 _ => write!(f, "{} {}", a, b),
             },
         }
@@ -460,6 +477,7 @@ impl fmt::Display for AtomicType {
             Function => write!(f, "(->)"),
             User(s) => f.write_str(s),
             Num => f.write_str("Num"),
+            Unique => f.write_str("*"),
         }
     }
 }

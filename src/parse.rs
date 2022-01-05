@@ -431,7 +431,17 @@ fn parse_type(pair: Pair<Rule>, tva: &mut TypeVarAllocator) -> Result<TypeExpres
                     TypeExpression::Composite(Box::new(acc), Box::new(t))
                 })
         }
-        Rule::terminal_type => parse_type(pair.into_inner().next().unwrap(), tva),
+        Rule::terminal_type => {
+            let mut inner = pair.into_inner();
+            let unique_flag_p = inner.next().unwrap();
+            assert_eq!(unique_flag_p.as_rule(), Rule::unique_flag);
+            let t = parse_type(inner.next().unwrap(), tva)?;
+            if unique_flag_p.as_str() == "*" {
+                Ok(TypeExpression::new_unique(t))
+            } else {
+                Ok(t)
+            }
+        }
         Rule::uc_ident => {
             let at = pair.as_str().parse::<AtomicType>().map_err(|e| {
                 Error::new(

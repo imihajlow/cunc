@@ -54,10 +54,15 @@ application_type = {
 }
 
 terminal_type = {
-      ("(" ~ arrow_type ~ ")") |
-      uc_ident |
-      lc_ident
+    unique_flag ~
+    (
+        ("(" ~ arrow_type ~ ")") |
+        uc_ident |
+        lc_ident
+    )
 }
+
+unique_flag = { "*"? }
 
 var_type_spec = {
     "::" ~ arrow_type
