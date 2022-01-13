@@ -1,8 +1,8 @@
-use crate::error::ErrorCause;
-use super::name_context::TypeContext;
-use crate::position::Position;
+use super::scope::TypeScope;
 use super::type_solver::Solver;
 use super::type_var_allocator::TypeVarAllocator;
+use crate::error::ErrorCause;
+use crate::position::Position;
 use crate::util::max_options;
 use crate::util::var_from_number;
 use std::collections::{HashMap, HashSet};
@@ -29,7 +29,7 @@ use std::str::FromStr;
     Example kinds:
 
     1.  * -> *
-        
+
         Composite
             Type
             Type
@@ -189,15 +189,15 @@ impl TypeExpression {
 
     pub(super) fn get_kind(
         &self,
-        context: &TypeContext<KindExpression>,
+        scope: &TypeScope<KindExpression>,
     ) -> Result<KindExpression, ErrorCause> {
         use CompositeExpression::*;
         match self {
-            Atomic(a) => a.get_kind(context),
+            Atomic(a) => a.get_kind(scope),
             Var(_) => Ok(KindExpression::Atomic(AtomicKind::Type)),
             Composite(a, b) => {
-                let a_kind = a.get_kind(context)?;
-                let b_kind = b.get_kind(context)?;
+                let a_kind = a.get_kind(scope)?;
+                let b_kind = b.get_kind(scope)?;
                 a_kind.apply(&b_kind)
             }
         }
@@ -312,21 +312,21 @@ impl CompositeExpression<AtomicType> {
     pub(super) fn create_kind_rules(
         &self,
         tva: &mut TypeVarAllocator,
-        context: &TypeContext<KindExpression>,
+        scope: &TypeScope<KindExpression>,
         solver: &mut Solver<AtomicKind>,
     ) -> Result<usize, ErrorCause> {
         use CompositeExpression::*;
         let my_index = tva.allocate(&Position::Unknown);
         match self {
             Atomic(a) => {
-                solver.add_rule(my_index, a.get_kind(context)?);
+                solver.add_rule(my_index, a.get_kind(scope)?);
             }
             Var(n) => {
                 solver.add_rule(my_index, KindExpression::Var(tva.map_existing(*n)));
             }
             Composite(a, b) => {
-                let a_index = a.create_kind_rules(tva, context, solver)?;
-                let b_index = b.create_kind_rules(tva, context, solver)?;
+                let a_index = a.create_kind_rules(tva, scope, solver)?;
+                let b_index = b.create_kind_rules(tva, scope, solver)?;
                 solver.add_rule(
                     a_index,
                     KindExpression::Composite(
@@ -362,10 +362,7 @@ impl IntType {
 }
 
 impl AtomicType {
-    fn get_kind(
-        &self,
-        context: &TypeContext<KindExpression>,
-    ) -> Result<KindExpression, ErrorCause> {
+    fn get_kind(&self, scope: &TypeScope<KindExpression>) -> Result<KindExpression, ErrorCause> {
         use AtomicType::*;
         match self {
             Int(_) => Ok(KindExpression::Atomic(AtomicKind::Type)),
@@ -384,7 +381,7 @@ impl AtomicType {
                 KindExpression::Atomic(AtomicKind::Type),
                 KindExpression::Atomic(AtomicKind::Constraint),
             )),
-            User(s) => context
+            User(s) => scope
                 .get(s)
                 .map(|e| KindExpression::clone(e))
                 .ok_or(ErrorCause::UnknownIdentifier(s.to_string())),
@@ -443,12 +440,12 @@ impl fmt::Display for TypeExpression {
                     Composite(op, _) => match &**op {
                         Atomic(AtomicType::Unique) => write!(f, "{} ->", b),
                         _ => write!(f, "({}) ->", b),
-                    }
-                }
+                    },
+                },
                 Atomic(AtomicType::Unique) => match &**b {
                     Atomic(_) | Var(_) => write!(f, "*{}", b),
                     Composite(_, _) => write!(f, "*({})", b),
-                }
+                },
                 _ => write!(f, "{} {}", a, b),
             },
         }

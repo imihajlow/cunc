@@ -1,9 +1,9 @@
-use crate::error::Error;
-use crate::position::{position_from_linecol, position_from_span, Position};
+use super::ast::*;
 use super::type_info::TypeVars;
 use super::type_info::{AtomicType, TypeExpression};
-use super::ast::*;
+use crate::error::Error;
 use crate::error::ErrorCause;
+use crate::position::{position_from_linecol, position_from_span, Position};
 use itertools::Itertools;
 use pest::iterators::Pair;
 use pest::iterators::Pairs;
@@ -214,27 +214,27 @@ fn parse_expression(
             let mut collected_expr: Option<Expression<OptionalType>> = None;
             for part in pair.into_inner() {
                 let part_position = position_from_span(&part.as_span());
-                let parsed_part: Expression<OptionalType> = if let Rule::op_expression = part.as_rule()
-                {
-                    parse_expression(part, tva, tc_map)?
-                } else {
-                    let parsed_part = match part.as_rule() {
-                        Rule::lc_ident | Rule::uc_ident => {
-                            ExpressionVariant::Variable(part.as_str().to_string())
-                        }
-                        Rule::dec_constant => {
-                            ExpressionVariant::IntConstant(parse_dec_constant(part)?)
-                        }
-                        Rule::hex_constant => {
-                            ExpressionVariant::IntConstant(parse_hex_constant(part)?)
-                        }
-                        Rule::bin_constant => {
-                            ExpressionVariant::IntConstant(parse_bin_constant(part)?)
-                        }
-                        _ => unreachable!("{}", part),
+                let parsed_part: Expression<OptionalType> =
+                    if let Rule::op_expression = part.as_rule() {
+                        parse_expression(part, tva, tc_map)?
+                    } else {
+                        let parsed_part = match part.as_rule() {
+                            Rule::lc_ident | Rule::uc_ident => {
+                                ExpressionVariant::Variable(part.as_str().to_string())
+                            }
+                            Rule::dec_constant => {
+                                ExpressionVariant::IntConstant(parse_dec_constant(part)?)
+                            }
+                            Rule::hex_constant => {
+                                ExpressionVariant::IntConstant(parse_hex_constant(part)?)
+                            }
+                            Rule::bin_constant => {
+                                ExpressionVariant::IntConstant(parse_bin_constant(part)?)
+                            }
+                            _ => unreachable!("{}", part),
+                        };
+                        Expression::<OptionalType>::new(parsed_part, part_position, None)
                     };
-                    Expression::<OptionalType>::new(parsed_part, part_position, None)
-                };
                 collected_expr = match collected_expr {
                     None => Some(parsed_part),
                     Some(e) => Some(Expression::new_application(e, parsed_part)),
@@ -544,8 +544,8 @@ fn parse_type_definition(mut inner: Pairs<Rule>, tc_map: &mut TcMap) -> Result<S
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::type_info::{CompositeExpression, TypeExpression};
+    use super::*;
 
     #[test]
     fn test_fn_type1() {
@@ -638,16 +638,37 @@ mod tests {
         let expr = parse_expression(root, &mut tva, &tc_map).unwrap();
         let mut lvl1 = expr.into_application_vec();
         assert_eq!(lvl1.len(), 3);
-        assert_eq!(lvl1[0].e, ExpressionVariant::<OptionalType>::Variable("__sub__".to_string()));
-        assert_eq!(lvl1[2].e, ExpressionVariant::<OptionalType>::Variable("d".to_string()));
+        assert_eq!(
+            lvl1[0].e,
+            ExpressionVariant::<OptionalType>::Variable("__sub__".to_string())
+        );
+        assert_eq!(
+            lvl1[2].e,
+            ExpressionVariant::<OptionalType>::Variable("d".to_string())
+        );
         let mut lvl2 = lvl1.drain(1..2).next().unwrap().into_application_vec();
         assert_eq!(lvl2.len(), 3);
-        assert_eq!(lvl2[0].e, ExpressionVariant::<OptionalType>::Variable("__add__".to_string()));
-        assert_eq!(lvl2[1].e, ExpressionVariant::<OptionalType>::Variable("a".to_string()));
+        assert_eq!(
+            lvl2[0].e,
+            ExpressionVariant::<OptionalType>::Variable("__add__".to_string())
+        );
+        assert_eq!(
+            lvl2[1].e,
+            ExpressionVariant::<OptionalType>::Variable("a".to_string())
+        );
         let lvl3 = lvl2.drain(2..).next().unwrap().into_application_vec();
         assert_eq!(lvl3.len(), 3);
-        assert_eq!(lvl3[0].e, ExpressionVariant::<OptionalType>::Variable("__mul__".to_string()));
-        assert_eq!(lvl3[1].e, ExpressionVariant::<OptionalType>::Variable("b".to_string()));
-        assert_eq!(lvl3[2].e, ExpressionVariant::<OptionalType>::Variable("c".to_string()));
+        assert_eq!(
+            lvl3[0].e,
+            ExpressionVariant::<OptionalType>::Variable("__mul__".to_string())
+        );
+        assert_eq!(
+            lvl3[1].e,
+            ExpressionVariant::<OptionalType>::Variable("b".to_string())
+        );
+        assert_eq!(
+            lvl3[2].e,
+            ExpressionVariant::<OptionalType>::Variable("c".to_string())
+        );
     }
 }

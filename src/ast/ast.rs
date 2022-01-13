@@ -1,9 +1,5 @@
-use crate::error::Error;
-use crate::error::ErrorCause;
-use crate::graph::ObjectGraph;
-use super::name_context::NameContext;
-use super::name_context::TypeContext;
-use crate::position::Position;
+use super::scope::NameScope;
+use super::scope::TypeScope;
 use super::type_info::AtomicKind;
 use super::type_info::AtomicType;
 use super::type_info::KindExpression;
@@ -12,6 +8,10 @@ use super::type_info::TypeVars;
 use super::type_solver::Solution;
 use super::type_solver::Solver;
 use super::type_var_allocator::TypeVarAllocator;
+use crate::error::Error;
+use crate::error::ErrorCause;
+use crate::graph::ObjectGraph;
+use crate::position::Position;
 use crate::util::var_from_number;
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -193,14 +193,14 @@ impl SumType {
 impl<Type> Module<Type> {
     /// Build a graph of dependencies between functions.
     fn build_dependency_graph(&self) -> ObjectGraph<String> {
-        let mut context = NameContext::new();
+        let mut scope = NameScope::new();
         for function in self.functions.iter() {
-            context.add_name(&function.name);
+            scope.add_name(&function.name);
         }
         let mut result: ObjectGraph<String> = ObjectGraph::new();
         for function in self.functions.iter() {
             let mut refs: HashSet<String> = HashSet::new();
-            function.body.e.collect_refs(&mut context, &mut refs);
+            function.body.e.collect_refs(&mut scope, &mut refs);
             result.add_node_unique(&function.name);
             for name in refs.into_iter() {
                 result.add_edge_unique(&function.name, &name);
@@ -211,10 +211,10 @@ impl<Type> Module<Type> {
 
     /// Build a graph of dependencies between custom types
     fn build_types_top_order(&self) -> Result<Vec<SumType>, Error> {
-        let mut context = NameContext::new();
+        let mut scope = NameScope::new();
         let mut type_by_name: HashMap<String, &SumType> = HashMap::new();
         for t in self.types.iter() {
-            context.add_name(&t.name);
+            scope.add_name(&t.name);
             type_by_name.insert(t.name.to_owned(), t);
         }
         let mut dep_graph: ObjectGraph<String> = ObjectGraph::new();
@@ -242,7 +242,7 @@ impl<Type> Module<Type> {
     }
 }
 
-/// Enum used in type context.
+/// Enum used in scopes.
 #[derive(Debug, Clone)]
 pub enum TypeAssignment {
     ToplevelFunction(TypeVars, TypeExpression, ConstraintContext<TypeExpression>),
@@ -261,7 +261,7 @@ impl TypeAssignment {
 impl Module<OptionalType> {
     pub(super) fn deduce_types(
         &self,
-        parent_context: &TypeContext<TypeAssignment>,
+        parent_scope: &TypeScope<TypeAssignment>,
     ) -> Result<Module<TypeExpression>, Error> {
         let function_by_name: HashMap<String, &Function<_>> =
             HashMap::from_iter(self.functions.iter().map(|f| (f.name.to_string(), f)));
@@ -271,12 +271,12 @@ impl Module<OptionalType> {
             .inverse_topsort()
             .unwrap();
         let mut result: Module<TypeExpression> = Module::new();
-        let mut context: TypeContext<TypeAssignment> = parent_context.push();
-        // Add type constructors into context
+        let mut scope: TypeScope<TypeAssignment> = parent_scope.push();
+        // Add type constructors into scope
         for t in self.types.iter() {
             for c in t.constructors.iter() {
                 let (tv, t) = c.get_function_type();
-                context
+                scope
                     .set(
                         &c.name,
                         &TypeAssignment::ToplevelFunction(tv, t, ConstraintContext::new()),
@@ -285,14 +285,14 @@ impl Module<OptionalType> {
             }
         }
         for group in toporder.into_iter() {
-            let mut group_context = context.push();
+            let mut group_scope = scope.push();
             let mut allocator = TypeVarAllocator::new();
             let mut solver = Solver::new();
             // First just assign indices to functions
             for fname in group.iter() {
                 let pos = &function_by_name[fname].p;
                 let index = allocator.allocate(pos);
-                group_context
+                group_scope
                     .set(fname, &TypeAssignment::LocalName(index))
                     .map_err(|c| Error::new(c, Position::clone(pos)))?;
             }
@@ -301,17 +301,17 @@ impl Module<OptionalType> {
             for fname in group.iter() {
                 let function = function_by_name[fname];
                 let annotated_function =
-                    function.assign_type_vars(&group_context, &mut solver, &mut allocator)?;
+                    function.assign_type_vars(&group_scope, &mut solver, &mut allocator)?;
                 var_annotated_fns.push(annotated_function);
             }
             // println!("{}", &solver);
             let solution = solver.solve().map_err(|e| e.as_error(&allocator))?;
             // println!("\nSolution:\n{}", &solution);
-            // Store functions in module and update context with their types
+            // Store functions in module and update scope with their types
             for function in var_annotated_fns.into_iter() {
                 let deduced_fn = function.apply_solution(&solution)?;
                 // println!("\n{} {}", &name, &deduced_body);
-                context
+                scope
                     .set(
                         &deduced_fn.name,
                         &TypeAssignment::ToplevelFunction(
@@ -333,9 +333,9 @@ impl Module<OptionalType> {
 }
 
 impl Module<TypeExpression> {
-    pub(super) fn deduce_kinds(&self) -> Result<TypeContext<KindExpression>, Error> {
+    pub(super) fn deduce_kinds(&self) -> Result<TypeScope<KindExpression>, Error> {
         let toporder = self.build_types_top_order()?;
-        let mut context: TypeContext<KindExpression> = TypeContext::new();
+        let mut scope: TypeScope<KindExpression> = TypeScope::new();
         for t in toporder.into_iter() {
             let mut solver: Solver<AtomicKind> = Solver::new();
             let mut tva = TypeVarAllocator::new();
@@ -343,7 +343,7 @@ impl Module<TypeExpression> {
             for c in t.constructors.iter() {
                 for param in c.params.iter() {
                     let index = param
-                        .create_kind_rules(&mut tva, &context, &mut solver)
+                        .create_kind_rules(&mut tva, &scope, &mut solver)
                         .map_err(|cause| Error::new(cause, Position::clone(&c.p)))?;
                     solver.add_rule(index, KindExpression::Atomic(AtomicKind::Type));
                 }
@@ -360,17 +360,15 @@ impl Module<TypeExpression> {
             // Assuming any remaining free var correspond to types.
             kind.substitute_free_vars(&KindExpression::Atomic(AtomicKind::Type));
             println!("{} :: {}", &t.name, &kind);
-            context
-                .set(&t.name, &kind)
-                .map_err(|c| Error::new(c, t.p))?;
+            scope.set(&t.name, &kind).map_err(|c| Error::new(c, t.p))?;
         }
-        Ok(context)
+        Ok(scope)
     }
 
     pub(super) fn check_kinds(&self) -> Result<(), Error> {
-        let context = self.deduce_kinds()?;
+        let scope = self.deduce_kinds()?;
         for f in self.functions.iter() {
-            f.check_kinds(&context)?;
+            f.check_kinds(&scope)?;
         }
         Ok(())
     }
@@ -379,33 +377,33 @@ impl Module<TypeExpression> {
 // collect_refs
 impl<Type> ExpressionVariant<Type> {
     /// Collect toplevel names referenced by this expression.
-    fn collect_refs(&self, context: &mut NameContext, result: &mut HashSet<String>) {
+    fn collect_refs(&self, scope: &mut NameScope, result: &mut HashSet<String>) {
         use ExpressionVariant::*;
         match self {
             Application(a, b) => {
-                a.e.collect_refs(context, result);
-                b.e.collect_refs(context, result);
+                a.e.collect_refs(scope, result);
+                b.e.collect_refs(scope, result);
             }
             IntConstant(_) => (),
             Variable(n) => {
-                if context.is_toplevel(n) {
+                if scope.is_toplevel(n) {
                     result.insert(n.to_owned());
                 }
             }
             Abstraction(l) => {
-                l.collect_refs(context, result);
+                l.collect_refs(scope, result);
             }
             Let(b, val, body) => {
-                val.e.collect_refs(context, result);
-                context.push();
-                context.add_name(&b.name);
-                body.e.collect_refs(context, result);
-                context.pop();
+                val.e.collect_refs(scope, result);
+                scope.push();
+                scope.add_name(&b.name);
+                body.e.collect_refs(scope, result);
+                scope.pop();
             }
             Pmatch(e, v) => {
-                e.e.collect_refs(context, result);
+                e.e.collect_refs(scope, result);
                 for c in v.iter() {
-                    c.collect_refs(context, result);
+                    c.collect_refs(scope, result);
                 }
             }
         }
@@ -413,22 +411,22 @@ impl<Type> ExpressionVariant<Type> {
 }
 
 impl<Type> Case<Type> {
-    fn collect_refs(&self, context: &mut NameContext, result: &mut HashSet<String>) {
-        context.push();
+    fn collect_refs(&self, scope: &mut NameScope, result: &mut HashSet<String>) {
+        scope.push();
         for b in self.params.iter() {
-            context.add_name(&b.name);
+            scope.add_name(&b.name);
         }
-        self.body.e.collect_refs(context, result);
-        context.pop();
+        self.body.e.collect_refs(scope, result);
+        scope.pop();
     }
 }
 
 impl<Type> Lambda<Type> {
-    fn collect_refs(&self, context: &mut NameContext, result: &mut HashSet<String>) {
-        context.push();
-        context.add_name(&self.param.name);
-        self.tail.e.collect_refs(context, result);
-        context.pop();
+    fn collect_refs(&self, scope: &mut NameScope, result: &mut HashSet<String>) {
+        scope.push();
+        scope.add_name(&self.param.name);
+        self.tail.e.collect_refs(scope, result);
+        scope.pop();
     }
 }
 // end collect_refs
@@ -439,7 +437,7 @@ impl Expression<OptionalType> {
     /// simultaniously adding rules to type solver.
     fn assign_type_vars(
         &self,
-        context: &TypeContext<TypeAssignment>,
+        scope: &TypeScope<TypeAssignment>,
         solver: &mut Solver<AtomicType>,
         allocator: &mut TypeVarAllocator,
         constraint_context: &mut ConstraintContext<VariableType>,
@@ -453,9 +451,9 @@ impl Expression<OptionalType> {
         match &self.e {
             Application(a, b) => {
                 let annotated_a =
-                    Box::new(a.assign_type_vars(context, solver, allocator, constraint_context)?);
+                    Box::new(a.assign_type_vars(scope, solver, allocator, constraint_context)?);
                 let annotated_b =
-                    Box::new(b.assign_type_vars(context, solver, allocator, constraint_context)?);
+                    Box::new(b.assign_type_vars(scope, solver, allocator, constraint_context)?);
                 let head_index = annotated_a.t.0;
                 let tail_index = annotated_b.t.0;
                 let fn_type = TypeExpression::new_function(
@@ -484,7 +482,7 @@ impl Expression<OptionalType> {
                 ))
             }
             Variable(name) => {
-                match context.get(name) {
+                match scope.get(name) {
                     None => Err(Error::new(
                         ErrorCause::UnknownIdentifier(name.to_string()),
                         my_position,
@@ -517,7 +515,7 @@ impl Expression<OptionalType> {
             }
             Abstraction(l) => {
                 let annotated_lambda =
-                    l.assign_type_vars(context, solver, allocator, constraint_context)?;
+                    l.assign_type_vars(scope, solver, allocator, constraint_context)?;
                 solver.add_rule(my_var_index, annotated_lambda.get_overall_type());
                 Ok(Expression::<VariableType>::new(
                     Abstraction(annotated_lambda),
@@ -533,13 +531,13 @@ impl Expression<OptionalType> {
                     Position::clone(&binding.p),
                 );
                 let annotated_val =
-                    val.assign_type_vars(context, solver, allocator, constraint_context)?;
-                let mut body_context = context.push();
-                body_context
+                    val.assign_type_vars(scope, solver, allocator, constraint_context)?;
+                let mut body_scope = scope.push();
+                body_scope
                     .set(&binding.name, &TypeAssignment::LocalName(var_index))
                     .map_err(|c| Error::new(c, Position::clone(&binding.p)))?;
                 let annotated_body =
-                    body.assign_type_vars(&body_context, solver, allocator, constraint_context)?;
+                    body.assign_type_vars(&body_scope, solver, allocator, constraint_context)?;
                 if let Some(t) = &binding.t.0 {
                     solver.add_rule(var_index, t.remap_vars(allocator));
                 }
@@ -558,11 +556,11 @@ impl Expression<OptionalType> {
             }
             Pmatch(e, v) => {
                 let annotated_e =
-                    e.assign_type_vars(context, solver, allocator, constraint_context)?;
+                    e.assign_type_vars(scope, solver, allocator, constraint_context)?;
                 let mut annotated_cases: Vec<Case<VariableType>> = Vec::new();
                 for case in v.iter() {
                     let new_case = case.assign_type_vars(
-                        context,
+                        scope,
                         solver,
                         allocator,
                         constraint_context,
@@ -584,7 +582,7 @@ impl Expression<OptionalType> {
 impl Case<OptionalType> {
     fn assign_type_vars(
         &self,
-        context: &TypeContext<TypeAssignment>,
+        scope: &TypeScope<TypeAssignment>,
         solver: &mut Solver<AtomicType>,
         allocator: &mut TypeVarAllocator,
         constraint_context: &mut ConstraintContext<VariableType>,
@@ -597,7 +595,7 @@ impl Case<OptionalType> {
             .map(|x| x + 1)
             .unwrap_or(0);
         allocator.enter_function(type_arity, &self.p);
-        let mut local_context = context.push();
+        let mut local_scope = scope.push();
         assert_eq!(self.tc.params.len(), self.params.len());
         // The expression being matched should be of the type constructor's parent type:
         solver.add_rule(parent_var_index, self.tc.parent_type.remap_vars(&allocator));
@@ -612,7 +610,7 @@ impl Case<OptionalType> {
             if let Some(t) = &param.t.0 {
                 solver.add_rule(param_var_index, TypeExpression::clone(t));
             }
-            local_context
+            local_scope
                 .set(&param.name, &TypeAssignment::LocalName(param_var_index))
                 .map_err(|c| Error::new(c, Position::clone(&param.p)))?;
             annotated_params.push(Binding::new(
@@ -623,7 +621,7 @@ impl Case<OptionalType> {
         }
         let annotated_body =
             self.body
-                .assign_type_vars(&local_context, solver, allocator, constraint_context)?;
+                .assign_type_vars(&local_scope, solver, allocator, constraint_context)?;
         allocator.leave_function();
         Ok(Case::new(
             TypeConstructor::clone(&self.tc),
@@ -639,12 +637,12 @@ impl Lambda<OptionalType> {
     /// Returns annotated Lambda and its type.
     fn assign_type_vars(
         &self,
-        context: &TypeContext<TypeAssignment>,
+        scope: &TypeScope<TypeAssignment>,
         solver: &mut Solver<AtomicType>,
         allocator: &mut TypeVarAllocator,
         constraint_context: &mut ConstraintContext<VariableType>,
     ) -> Result<Lambda<VariableType>, Error> {
-        let mut local_context = context.push();
+        let mut local_scope = scope.push();
         // Annotate parameter
         let param_index = allocator.allocate(&self.param.p);
         let new_param_binding: Binding<VariableType> = Binding::new(
@@ -652,7 +650,7 @@ impl Lambda<OptionalType> {
             VariableType(param_index),
             Position::clone(&self.param.p),
         );
-        local_context
+        local_scope
             .set(&self.param.name, &TypeAssignment::LocalName(param_index))
             .map_err(|c| Error::new(c, Position::clone(&self.param.p)))?;
         if let Some(t) = &self.param.t.0 {
@@ -663,12 +661,9 @@ impl Lambda<OptionalType> {
             solver.add_rule(return_type_index, t.remap_vars(allocator));
         }
         // Annotate tail
-        let new_tail = self.tail.assign_type_vars(
-            &mut local_context,
-            solver,
-            allocator,
-            constraint_context,
-        )?;
+        let new_tail =
+            self.tail
+                .assign_type_vars(&mut local_scope, solver, allocator, constraint_context)?;
         // Add rule matching return type with tail type
         solver.add_rule(return_type_index, TypeExpression::Var(new_tail.t.0));
 
@@ -684,17 +679,17 @@ impl Lambda<OptionalType> {
 impl Function<OptionalType> {
     fn assign_type_vars(
         &self,
-        context: &TypeContext<TypeAssignment>,
+        scope: &TypeScope<TypeAssignment>,
         solver: &mut Solver<AtomicType>,
         allocator: &mut TypeVarAllocator,
     ) -> Result<Function<VariableType>, Error> {
-        let my_index = context.get(&self.name).unwrap().unwrap_local_name();
-        let function_context = context.push();
+        let my_index = scope.get(&self.name).unwrap().unwrap_local_name();
+        let function_scope = scope.push();
         // TODO type_vars.get_vars_count must take context into account
         allocator.enter_function(self.type_vars.get_vars_count(), &self.p);
         let mut constraint_context = self.context.assign_type_vars(solver, allocator)?;
         let body = self.body.assign_type_vars(
-            &function_context,
+            &function_scope,
             solver,
             allocator,
             &mut constraint_context,
@@ -730,7 +725,10 @@ impl ConstraintContext<OptionalType> {
 }
 
 impl Function<VariableType> {
-    fn apply_solution(self, solution: &Solution<AtomicType>) -> Result<Function<TypeExpression>, Error> {
+    fn apply_solution(
+        self,
+        solution: &Solution<AtomicType>,
+    ) -> Result<Function<TypeExpression>, Error> {
         let new_constraint_context = self.context.translate_types(solution).check_and_reduce()?;
         Ok(Function {
             name: self.name,
@@ -858,48 +856,48 @@ fn check_kinds_eq(a: KindExpression, b: KindExpression, p: &Position) -> Result<
 
 fn check_kind_of_type(
     t: &TypeExpression,
-    context: &TypeContext<KindExpression>,
+    scope: &TypeScope<KindExpression>,
     p: &Position,
 ) -> Result<(), Error> {
     let my_kind = t
-        .get_kind(context)
+        .get_kind(scope)
         .map_err(|c| Error::new(c, Position::clone(p)))?;
     check_kinds_eq(my_kind, KindExpression::TYPE, p)
 }
 
 impl Function<TypeExpression> {
-    fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
-        self.body.check_kinds(context)?;
-        self.context.check_kinds(context)
+    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
+        self.body.check_kinds(scope)?;
+        self.context.check_kinds(scope)
     }
 }
 
 impl Expression<TypeExpression> {
-    fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
-        check_kind_of_type(&self.t, context, &self.p)?;
-        self.e.check_kinds(context)
+    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
+        check_kind_of_type(&self.t, scope, &self.p)?;
+        self.e.check_kinds(scope)
     }
 }
 
 impl ExpressionVariant<TypeExpression> {
-    fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
+    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
         use ExpressionVariant::*;
         match self {
             IntConstant(_) | Variable(_) => Ok(()),
             Application(a, b) => {
-                a.check_kinds(context)?;
-                b.check_kinds(context)
+                a.check_kinds(scope)?;
+                b.check_kinds(scope)
             }
-            Abstraction(l) => l.check_kinds(context),
+            Abstraction(l) => l.check_kinds(scope),
             Let(binding, value, body) => {
-                binding.check_kinds(context)?;
-                value.check_kinds(context)?;
-                body.check_kinds(context)
+                binding.check_kinds(scope)?;
+                value.check_kinds(scope)?;
+                body.check_kinds(scope)
             }
             Pmatch(e, v) => {
-                e.check_kinds(context)?;
+                e.check_kinds(scope)?;
                 for case in v.iter() {
-                    case.check_kinds(context)?;
+                    case.check_kinds(scope)?;
                 }
                 Ok(())
             }
@@ -908,34 +906,34 @@ impl ExpressionVariant<TypeExpression> {
 }
 
 impl Case<TypeExpression> {
-    fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
+    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
         for b in self.params.iter() {
-            b.check_kinds(context)?;
+            b.check_kinds(scope)?;
         }
-        self.body.check_kinds(context)
+        self.body.check_kinds(scope)
     }
 }
 
 impl Lambda<TypeExpression> {
-    fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
-        self.param.check_kinds(context)?;
-        check_kind_of_type(&self.return_type, context, &self.p)?;
-        self.tail.check_kinds(context)
+    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
+        self.param.check_kinds(scope)?;
+        check_kind_of_type(&self.return_type, scope, &self.p)?;
+        self.tail.check_kinds(scope)
     }
 }
 
 impl Binding<TypeExpression> {
-    fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
-        check_kind_of_type(&self.t, context, &self.p)
+    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
+        check_kind_of_type(&self.t, scope, &self.p)
     }
 }
 
 impl ConstraintContext<TypeExpression> {
-    fn check_kinds(&self, context: &TypeContext<KindExpression>) -> Result<(), Error> {
+    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
         for (t, p) in self.c.iter() {
-            let kind =
-                t.get_kind(context)
-                    .map_err(|c| Error::new(c, Position::clone(p)))?;
+            let kind = t
+                .get_kind(scope)
+                .map_err(|c| Error::new(c, Position::clone(p)))?;
             check_kinds_eq(kind, KindExpression::CONSTRAINT, p)?;
         }
         Ok(())
@@ -944,17 +942,21 @@ impl ConstraintContext<TypeExpression> {
 // end check_kinds
 
 impl Expression<TypeExpression> {
-    pub(super) fn new(e: ExpressionVariant<TypeExpression>, p: Position, t: TypeExpression) -> Self {
-        Self {
-            e,
-            p,
-            t,
-        }
+    pub(super) fn new(
+        e: ExpressionVariant<TypeExpression>,
+        p: Position,
+        t: TypeExpression,
+    ) -> Self {
+        Self { e, p, t }
     }
 }
 
 impl Expression<OptionalType> {
-    pub(super) fn new(e: ExpressionVariant<OptionalType>, p: Position, t: Option<TypeExpression>) -> Self {
+    pub(super) fn new(
+        e: ExpressionVariant<OptionalType>,
+        p: Position,
+        t: Option<TypeExpression>,
+    ) -> Self {
         Self {
             e,
             p,
@@ -991,7 +993,7 @@ impl<Type> Expression<Type> {
                 v.push(*b);
                 v
             }
-            _ => vec![self]
+            _ => vec![self],
         }
     }
 }
@@ -1248,16 +1250,16 @@ impl<Type: PrefixFormatter> fmt::Display for Module<Type> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::parse::parse_str;
+    use super::*;
 
     #[test]
     fn test_deduce_kinds() {
         let code = "data Toto a b = Mo (b a).";
         let module = parse_str(code).unwrap();
-        let typed = module.deduce_types(&TypeContext::new()).unwrap();
-        let kind_context = typed.deduce_kinds().unwrap();
-        let toto_kind = kind_context.get("Toto").unwrap();
+        let typed = module.deduce_types(&TypeScope::new()).unwrap();
+        let kind_scope = typed.deduce_kinds().unwrap();
+        let toto_kind = kind_scope.get("Toto").unwrap();
 
         use super::super::type_info::KindExpression;
         // * -> (* -> *) -> *
