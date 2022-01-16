@@ -3,6 +3,7 @@ use argparse::ArgumentParser;
 use argparse::Store;
 
 mod ast;
+mod cps;
 mod error;
 mod graph;
 mod position;

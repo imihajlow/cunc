@@ -126,6 +126,14 @@ impl<AT> CompositeExpression<AT> {
     pub(super) fn new_composite(a: Self, b: Self) -> Self {
         CompositeExpression::Composite(Box::new(a), Box::new(b))
     }
+
+    pub fn try_into_atomic(self) -> Result<AT, Self> {
+        if let CompositeExpression::Atomic(a) = self {
+            Ok(a)
+        } else {
+            Err(self)
+        }
+    }
 }
 
 impl<AT: Clone> CompositeExpression<AT> {
@@ -362,6 +370,14 @@ impl IntType {
 }
 
 impl AtomicType {
+    pub fn try_into_int_type(self) -> Result<IntType, Self> {
+        if let AtomicType::Int(t) = self {
+            Ok(t)
+        } else {
+            Err(self)
+        }
+    }
+    
     fn get_kind(&self, scope: &TypeScope<KindExpression>) -> Result<KindExpression, ErrorCause> {
         use AtomicType::*;
         match self {

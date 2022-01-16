@@ -69,7 +69,7 @@ pub struct Lambda<Type> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binding<Type> {
-    name: String,
+    pub name: String,
     t: Type,
     p: Position,
 }
@@ -1035,6 +1035,11 @@ impl<Type> Lambda<Type> {
             tail: Box::new(tail),
             p,
         }
+    }
+
+    // Deconstruct Lambda into parameter name and body
+    pub fn explode(self) -> (String, Expression<Type>) {
+        (self.param.name, *self.tail)
     }
 }
 
