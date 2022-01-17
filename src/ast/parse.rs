@@ -1,5 +1,5 @@
 use super::ast::*;
-use super::type_info::TypeVars;
+use super::type_vars::TypeVars;
 use super::type_info::{AtomicType, TypeExpression};
 use crate::error::Error;
 use crate::error::ErrorCause;
@@ -130,7 +130,7 @@ fn parse_function(pair: Pair<Rule>, tc_map: &TcMap) -> Result<Function<OptionalT
     tva.disallow_new_vars();
     let body_pair = inner.next().unwrap();
     let body_expr = parse_expression(body_pair, &mut tva, tc_map)?;
-    let body = build_lambda(param_idents.into_inner(), fn_type, body_expr)?;
+    let body = curry(param_idents.into_inner(), fn_type, body_expr)?;
     Ok(Function::new(
         name.to_string(),
         context,
@@ -153,7 +153,7 @@ fn substitute_return_type(
 }
 
 /// Build maybe nested lambda expression from a list of params, type and body.
-fn build_lambda(
+fn curry(
     mut param_idents: Pairs<Rule>,
     types: Option<TypeExpression>,
     body: Expression<OptionalType>,
@@ -183,7 +183,7 @@ fn build_lambda(
                 OptionalType(param_type),
                 Position::clone(&param_pos),
             );
-            let inner_expression = build_lambda(param_idents, rest_types, body)?;
+            let inner_expression = curry(param_idents, rest_types, body)?;
             let my_position = param_pos.merge(&inner_expression.p);
             let lambda: Lambda<OptionalType> = Lambda::new(
                 binding,

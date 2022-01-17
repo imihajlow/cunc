@@ -2,7 +2,8 @@ use super::ast::ConstraintContext;
 use super::ast::TypeAssignment;
 use super::scope::TypeScope;
 use super::type_info::AtomicType;
-use super::type_info::{TypeExpression, TypeVars};
+use super::type_info::TypeExpression;
+use super::type_vars::TypeVars;
 use crate::position::Position;
 
 pub(super) fn create_builtin_scope() -> TypeScope<'static, TypeAssignment> {

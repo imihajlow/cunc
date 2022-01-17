@@ -19,6 +19,3 @@ y = match x {
 inc x = x + 1.
 
 sumsq x y = x * x + y * y.
-
-[*a -> *a]
-uniq_id x = x.

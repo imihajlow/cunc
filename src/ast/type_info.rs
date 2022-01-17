@@ -56,11 +56,6 @@ pub enum CompositeExpression<AT> {
     Composite(Box<Self>, Box<Self>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct TypeVars {
-    range: usize,
-}
-
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum IntBits {
     B8 = 1,
@@ -94,19 +89,6 @@ pub enum AtomicTypeParseError {
 pub enum AtomicKind {
     Type,
     Constraint,
-}
-
-impl TypeVars {
-    pub(super) fn new(range: usize) -> Self {
-        Self { range }
-    }
-    pub(super) fn is_empty(&self) -> bool {
-        self.range == 0
-    }
-
-    pub(super) fn get_vars_count(&self) -> usize {
-        self.range
-    }
 }
 
 impl<AT> CompositeExpression<AT> {
@@ -317,6 +299,8 @@ impl<AT: Clone> CompositeExpression<AT> {
 }
 
 impl CompositeExpression<AtomicType> {
+    /// Create rules for the solver to check kinds of a type.
+    /// Returns newly variable index.
     pub(super) fn create_kind_rules(
         &self,
         tva: &mut TypeVarAllocator,
@@ -366,6 +350,10 @@ impl CompositeExpression<AtomicType> {
 impl IntType {
     pub(super) fn new(signed: bool, bits: IntBits) -> Self {
         Self { signed, bits }
+    }
+
+    pub(super) fn get_size(&self) -> usize {
+        self.bits as usize * 8
     }
 }
 
@@ -435,12 +423,6 @@ impl FromStr for AtomicType {
                 }
             }
         }
-    }
-}
-
-impl fmt::Display for TypeVars {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Ok(())
     }
 }
 

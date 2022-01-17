@@ -2,12 +2,14 @@ use super::scope::NameScope;
 use super::scope::TypeScope;
 use super::type_info::AtomicKind;
 use super::type_info::AtomicType;
+use super::type_info::IntBits;
+use super::type_info::IntType;
 use super::type_info::KindExpression;
 use super::type_info::TypeExpression;
-use super::type_info::TypeVars;
 use super::type_solver::Solution;
 use super::type_solver::Solver;
 use super::type_var_allocator::TypeVarAllocator;
+use super::type_vars::{TypeVars, TypeVarsMapping};
 use crate::error::Error;
 use crate::error::ErrorCause;
 use crate::graph::ObjectGraph;
@@ -49,6 +51,7 @@ pub enum ExpressionVariant<Type> {
     Abstraction(Lambda<Type>),
     Let(Binding<Type>, Box<Expression<Type>>, Box<Expression<Type>>),
     Pmatch(Box<Expression<Type>>, Vec<Case<Type>>),
+    Record(Vec<Expression<Type>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +175,59 @@ impl TypeConstructor {
             TypeExpression::new_function_from_vec(parts),
         )
     }
+
+    /// Create the type constructor function.
+    fn create_function(&self, has_enum_index: bool) -> Function<OptionalType> {
+        let bindings: Vec<_> = self
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                Binding::<OptionalType>::new(
+                    format!("_{i}"),
+                    OptionalType(Some(t.to_owned())),
+                    Position::Builtin,
+                )
+            })
+            .collect();
+        let parts_iter = self.params.iter().enumerate().map(|(i, t)| {
+            Expression::<OptionalType>::new(
+                ExpressionVariant::Variable(format!("_{i}")),
+                Position::Builtin,
+                Some(t.to_owned()),
+            )
+        });
+
+        let record = if has_enum_index {
+            ExpressionVariant::Record(
+                std::iter::once(Expression::<OptionalType>::new(
+                    ExpressionVariant::IntConstant(self.enum_index as u64),
+                    Position::Builtin,
+                    Some(TypeExpression::Atomic(AtomicType::Int(IntType::new(
+                        false,
+                        IntBits::B8,
+                    )))),
+                ))
+                .chain(parts_iter)
+                .collect(),
+            )
+        } else {
+            ExpressionVariant::Record(parts_iter.collect())
+        };
+        let body = Expression::<OptionalType>::new(
+            record,
+            self.p.to_owned(),
+            Some(self.parent_type.to_owned()),
+        );
+        Function::<OptionalType>::new_curry(
+            self.name.to_owned(),
+            ConstraintContext::new(),
+            bindings,
+            body,
+            self.type_vars.to_owned(),
+            self.p.to_owned(),
+        )
+    }
 }
 
 impl SumType {
@@ -259,6 +315,15 @@ impl TypeAssignment {
 }
 
 impl Module<OptionalType> {
+    pub(super) fn generate_type_constructors(&mut self) {
+        for t in self.types.iter() {
+            for c in t.constructors.iter() {
+                let fun = c.create_function(!t.constructors.is_empty());
+                self.functions.push(fun);
+            }
+        }
+    }
+
     pub(super) fn deduce_types(
         &self,
         parent_scope: &TypeScope<TypeAssignment>,
@@ -272,18 +337,7 @@ impl Module<OptionalType> {
             .unwrap();
         let mut result: Module<TypeExpression> = Module::new();
         let mut scope: TypeScope<TypeAssignment> = parent_scope.push();
-        // Add type constructors into scope
-        for t in self.types.iter() {
-            for c in t.constructors.iter() {
-                let (tv, t) = c.get_function_type();
-                scope
-                    .set(
-                        &c.name,
-                        &TypeAssignment::ToplevelFunction(tv, t, ConstraintContext::new()),
-                    )
-                    .map_err(|cause| Error::new(cause, Position::clone(&c.p)))?;
-            }
-        }
+
         for group in toporder.into_iter() {
             let mut group_scope = scope.push();
             let mut allocator = TypeVarAllocator::new();
@@ -305,7 +359,7 @@ impl Module<OptionalType> {
                 var_annotated_fns.push(annotated_function);
             }
             // println!("{}", &solver);
-            let solution = solver.solve().map_err(|e| e.as_error(&allocator))?;
+            let solution = solver.solve().map_err(|e| e.into_error(&allocator))?;
             // println!("\nSolution:\n{}", &solution);
             // Store functions in module and update scope with their types
             for function in var_annotated_fns.into_iter() {
@@ -333,7 +387,7 @@ impl Module<OptionalType> {
 }
 
 impl Module<TypeExpression> {
-    pub(super) fn deduce_kinds(&self) -> Result<TypeScope<KindExpression>, Error> {
+    pub(super) fn deduce_data_kinds(&self) -> Result<TypeScope<KindExpression>, Error> {
         let toporder = self.build_types_top_order()?;
         let mut scope: TypeScope<KindExpression> = TypeScope::new();
         for t in toporder.into_iter() {
@@ -350,7 +404,7 @@ impl Module<TypeExpression> {
             }
             let solution = solver
                 .solve()
-                .map_err(|e| e.as_error(&tva).with_position(Position::clone(&t.p)))?;
+                .map_err(|e| e.into_error(&tva).with_position(Position::clone(&t.p)))?;
             let mut kind = (0..t.arity)
                 .map(|i| solution.translate_var_index(i))
                 .chain(iter::once(KindExpression::Atomic(AtomicKind::Type)))
@@ -366,10 +420,13 @@ impl Module<TypeExpression> {
     }
 
     pub(super) fn check_kinds(&self) -> Result<(), Error> {
-        let scope = self.deduce_kinds()?;
+        let scope = self.deduce_data_kinds()?;
+        let mut solver: Solver<AtomicKind> = Solver::new();
+        let mut tva = TypeVarAllocator::new();
         for f in self.functions.iter() {
-            f.check_kinds(&scope)?;
+            f.create_kind_rules(&mut tva, &scope, &mut solver)?
         }
+        solver.solve().map_err(|e| e.into_error(&tva))?;
         Ok(())
     }
 }
@@ -404,6 +461,11 @@ impl<Type> ExpressionVariant<Type> {
                 e.e.collect_refs(scope, result);
                 for c in v.iter() {
                     c.collect_refs(scope, result);
+                }
+            }
+            Record(v) => {
+                for e in v.iter() {
+                    e.e.collect_refs(scope, result);
                 }
             }
         }
@@ -571,6 +633,21 @@ impl Expression<OptionalType> {
                 }
                 Ok(Expression::<VariableType>::new(
                     Pmatch(Box::new(annotated_e), annotated_cases),
+                    my_position,
+                    my_var_index,
+                ))
+            }
+            Record(v) => {
+                let mut annotated_v: Vec<Expression<VariableType>> = Vec::new();
+                for e in v.iter() {
+                    let annotated_e =
+                        e.assign_type_vars(scope, solver, allocator, constraint_context)?;
+                    let var_index = allocator.allocate(&e.p);
+                    solver.add_rule(var_index, e.t.0.as_ref().unwrap().to_owned()); // Records are always annotated
+                    annotated_v.push(annotated_e);
+                }
+                Ok(Expression::<VariableType>::new(
+                    Record(annotated_v),
                     my_position,
                     my_var_index,
                 ))
@@ -801,6 +878,7 @@ impl ExpressionVariant<VariableType> {
                 Box::new(e.translate_types(solution)),
                 v.into_iter().map(|c| c.translate_types(solution)).collect(),
             ),
+            Record(v) => Record(v.into_iter().map(|c| c.translate_types(solution)).collect()),
         }
     }
 }
@@ -842,62 +920,53 @@ impl ConstraintContext<VariableType> {
 }
 // end translate_types
 
-// check_kinds
-fn check_kinds_eq(a: KindExpression, b: KindExpression, p: &Position) -> Result<(), Error> {
-    if a != b {
-        Err(Error::new(
-            ErrorCause::KindsMismatch(a, b),
-            Position::clone(&p),
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-fn check_kind_of_type(
-    t: &TypeExpression,
-    scope: &TypeScope<KindExpression>,
-    p: &Position,
-) -> Result<(), Error> {
-    let my_kind = t
-        .get_kind(scope)
-        .map_err(|c| Error::new(c, Position::clone(p)))?;
-    check_kinds_eq(my_kind, KindExpression::TYPE, p)
-}
-
-impl Function<TypeExpression> {
-    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
-        self.body.check_kinds(scope)?;
-        self.context.check_kinds(scope)
-    }
-}
-
+// create_kind_rules
 impl Expression<TypeExpression> {
-    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
-        check_kind_of_type(&self.t, scope, &self.p)?;
-        self.e.check_kinds(scope)
+    fn create_kind_rules(
+        &self,
+        tva: &mut TypeVarAllocator,
+        scope: &TypeScope<KindExpression>,
+        solver: &mut Solver<AtomicKind>,
+    ) -> Result<(), Error> {
+        let index = self
+            .t
+            .create_kind_rules(tva, scope, solver)
+            .map_err(|c| Error::new(c, self.p.to_owned()))?;
+        solver.add_rule(index, KindExpression::TYPE);
+        self.e.create_kind_rules(tva, scope, solver)
     }
 }
 
 impl ExpressionVariant<TypeExpression> {
-    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
+    fn create_kind_rules(
+        &self,
+        tva: &mut TypeVarAllocator,
+        scope: &TypeScope<KindExpression>,
+        solver: &mut Solver<AtomicKind>,
+    ) -> Result<(), Error> {
         use ExpressionVariant::*;
         match self {
             IntConstant(_) | Variable(_) => Ok(()),
             Application(a, b) => {
-                a.check_kinds(scope)?;
-                b.check_kinds(scope)
+                a.create_kind_rules(tva, scope, solver)?;
+                b.create_kind_rules(tva, scope, solver)
             }
-            Abstraction(l) => l.check_kinds(scope),
+            Abstraction(l) => l.create_kind_rules(tva, scope, solver),
             Let(binding, value, body) => {
-                binding.check_kinds(scope)?;
-                value.check_kinds(scope)?;
-                body.check_kinds(scope)
+                binding.create_kind_rules(tva, scope, solver)?;
+                value.create_kind_rules(tva, scope, solver)?;
+                body.create_kind_rules(tva, scope, solver)
             }
             Pmatch(e, v) => {
-                e.check_kinds(scope)?;
+                e.create_kind_rules(tva, scope, solver)?;
                 for case in v.iter() {
-                    case.check_kinds(scope)?;
+                    case.create_kind_rules(tva, scope, solver)?;
+                }
+                Ok(())
+            }
+            Record(v) => {
+                for e in v.iter() {
+                    e.create_kind_rules(tva, scope, solver)?;
                 }
                 Ok(())
             }
@@ -906,40 +975,92 @@ impl ExpressionVariant<TypeExpression> {
 }
 
 impl Case<TypeExpression> {
-    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
-        for b in self.params.iter() {
-            b.check_kinds(scope)?;
+    fn create_kind_rules(
+        &self,
+        tva: &mut TypeVarAllocator,
+        scope: &TypeScope<KindExpression>,
+        solver: &mut Solver<AtomicKind>,
+    ) -> Result<(), Error> {
+        for param in self.params.iter() {
+            param.create_kind_rules(tva, scope, solver)?;
         }
-        self.body.check_kinds(scope)
+        self.body.create_kind_rules(tva, scope, solver)
     }
 }
 
 impl Lambda<TypeExpression> {
-    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
-        self.param.check_kinds(scope)?;
-        check_kind_of_type(&self.return_type, scope, &self.p)?;
-        self.tail.check_kinds(scope)
+    fn create_kind_rules(
+        &self,
+        tva: &mut TypeVarAllocator,
+        scope: &TypeScope<KindExpression>,
+        solver: &mut Solver<AtomicKind>,
+    ) -> Result<(), Error> {
+        let index = self
+            .return_type
+            .create_kind_rules(tva, scope, solver)
+            .map_err(|c| Error::new(c, self.p.to_owned()))?;
+        solver.add_rule(index, KindExpression::TYPE);
+        self.param.create_kind_rules(tva, scope, solver)?;
+        self.tail.create_kind_rules(tva, scope, solver)
     }
 }
 
 impl Binding<TypeExpression> {
-    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
-        check_kind_of_type(&self.t, scope, &self.p)
+    fn create_kind_rules(
+        &self,
+        tva: &mut TypeVarAllocator,
+        scope: &TypeScope<KindExpression>,
+        solver: &mut Solver<AtomicKind>,
+    ) -> Result<(), Error> {
+        let index = self
+            .t
+            .create_kind_rules(tva, scope, solver)
+            .map_err(|c| Error::new(c, self.p.to_owned()))?;
+        solver.add_rule(index, KindExpression::TYPE);
+        Ok(())
     }
 }
 
 impl ConstraintContext<TypeExpression> {
-    fn check_kinds(&self, scope: &TypeScope<KindExpression>) -> Result<(), Error> {
+    fn create_kind_rules(
+        &self,
+        tva: &mut TypeVarAllocator,
+        scope: &TypeScope<KindExpression>,
+        solver: &mut Solver<AtomicKind>,
+    ) -> Result<(), Error> {
         for (t, p) in self.c.iter() {
-            let kind = t
-                .get_kind(scope)
-                .map_err(|c| Error::new(c, Position::clone(p)))?;
-            check_kinds_eq(kind, KindExpression::CONSTRAINT, p)?;
+            let index = t
+                .create_kind_rules(tva, scope, solver)
+                .map_err(|t| Error::new(t, p.to_owned()))?;
+            solver.add_rule(index, KindExpression::CONSTRAINT);
         }
         Ok(())
     }
 }
-// end check_kinds
+
+impl Function<TypeExpression> {
+    fn create_kind_rules(
+        &self,
+        tva: &mut TypeVarAllocator,
+        scope: &TypeScope<KindExpression>,
+        solver: &mut Solver<AtomicKind>,
+    ) -> Result<(), Error> {
+        let function_scope = scope.push();
+        tva.enter_function(self.type_vars.get_vars_count(), &self.p);
+        let body_index = self
+            .body
+            .t
+            .create_kind_rules(tva, &function_scope, solver)
+            .map_err(|c| Error::new(c, self.p.to_owned()))?;
+        solver.add_rule(body_index, KindExpression::TYPE);
+        self.context
+            .create_kind_rules(tva, &function_scope, solver)?;
+        self.body.create_kind_rules(tva, &function_scope, solver)?;
+        tva.leave_function();
+        Ok(())
+    }
+}
+// end create_kind_rules
 
 impl Expression<TypeExpression> {
     pub(super) fn new(
@@ -1010,6 +1131,39 @@ impl<Type> Function<Type> {
             name,
             context,
             body,
+            type_vars,
+            p,
+        }
+    }
+}
+
+impl Function<OptionalType> {
+    fn new_curry(
+        name: String,
+        context: ConstraintContext<OptionalType>,
+        params: Vec<Binding<OptionalType>>,
+        body: Expression<OptionalType>,
+        type_vars: TypeVars,
+        p: Position,
+    ) -> Self {
+        let mut tail = body;
+        for param in params.into_iter().rev() {
+            let new_pos = param.p.merge(&tail.p);
+            tail = Expression::<OptionalType>::new(
+                ExpressionVariant::Abstraction(Lambda::new(
+                    param,
+                    tail.t.to_owned(),
+                    tail,
+                    new_pos.to_owned(),
+                )),
+                new_pos,
+                None,
+            )
+        }
+        Self {
+            name,
+            context,
+            body: tail,
             type_vars,
             p,
         }
@@ -1138,6 +1292,17 @@ where
                 }
                 f.write_str("}")
             }
+            Self::Record(v) => {
+                f.write_str("{")?;
+                for s in v
+                    .iter()
+                    .map(|e| format!("{e}"))
+                    .intersperse(", ".to_string())
+                {
+                    f.write_str(&s)?;
+                }
+                f.write_str("}")
+            }
         }
     }
 }
@@ -1263,7 +1428,7 @@ mod tests {
         let code = "data Toto a b = Mo (b a).";
         let module = parse_str(code).unwrap();
         let typed = module.deduce_types(&TypeScope::new()).unwrap();
-        let kind_scope = typed.deduce_kinds().unwrap();
+        let kind_scope = typed.deduce_data_kinds().unwrap();
         let toto_kind = kind_scope.get("Toto").unwrap();
 
         use super::super::type_info::KindExpression;

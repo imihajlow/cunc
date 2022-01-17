@@ -4,6 +4,7 @@ use crate::error::Mismatchable;
 use crate::position::Position;
 use super::type_info::{CompositeExpression, TypeExpression};
 use super::type_var_allocator::TypeVarAllocator;
+use super::type_vars::TypeVars;
 use crate::util::max_options;
 use crate::util::var_from_number;
 use std::collections::HashMap;
@@ -21,9 +22,15 @@ pub(super) enum SolveError {
 }
 
 impl SolveError {
-    pub(super) fn as_error(self, allocator: &TypeVarAllocator) -> Error {
+    pub(super) fn into_error(self, allocator: &TypeVarAllocator) -> Error {
         match self {
             Self::RuleError(n, c) => Error::new(c, Position::clone(allocator.get_position(n))),
+        }
+    }
+
+    pub(super) fn into_error_cause(self) -> ErrorCause {
+        match self {
+            Self::RuleError(_, c) => c,
         }
     }
 }
@@ -53,6 +60,12 @@ where
             self.rules.resize(var_index + 1, Vec::new());
         }
         self.rules[var_index].push(t);
+    }
+
+    pub fn announce_vars(&mut self, tv: &TypeVars) {
+        if self.rules.len() < tv.get_vars_count() {
+            self.rules.resize(tv.get_vars_count(), Vec::new());
+        }
     }
 
     pub fn solve(mut self) -> Result<Solution<AT>, SolveError> {
