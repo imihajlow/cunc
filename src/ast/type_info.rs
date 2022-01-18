@@ -116,6 +116,18 @@ impl<AT> CompositeExpression<AT> {
             Err(self)
         }
     }
+
+    pub(super) fn uncurry<'a>(&'a self) -> Vec<&'a Self> {
+        use CompositeExpression::*;
+        match self {
+            Atomic(_) | Var(_) => vec![self],
+            Composite(a, b) => {
+                let mut r = a.uncurry();
+                r.push(&**b);
+                r
+            }
+        }
+    }
 }
 
 impl<AT: Clone> CompositeExpression<AT> {
@@ -365,7 +377,7 @@ impl AtomicType {
             Err(self)
         }
     }
-    
+
     fn get_kind(&self, scope: &TypeScope<KindExpression>) -> Result<KindExpression, ErrorCause> {
         use AtomicType::*;
         match self {
@@ -507,5 +519,54 @@ impl fmt::Display for AtomicTypeParseError {
             WrongIntSize => f.write_str("wrong integer width"),
             Unknown => f.write_str("unknown type"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::parse::parse_str;
+    use super::*;
+
+    #[test]
+    fn test_uncurry_enum() {
+        let code = "
+        data Foo a b c = Bar a b c.
+
+        [U8]
+        x = 2.
+
+        y = Bar x x x.
+        ";
+        let mut module = parse_str(code).unwrap();
+        module.generate_type_constructors();
+        let typed = module.deduce_types(&TypeScope::new()).unwrap();
+        let y = typed.get_function("y").unwrap();
+        let yt = &y.body.t;
+        let uncurried = yt.uncurry();
+        assert_eq!(
+            uncurried,
+            [
+                &TypeExpression::Atomic(AtomicType::User("Foo".to_string())),
+                &TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8))),
+                &TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8))),
+                &TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8)))
+            ]
+        );
+    }
+
+    #[test]
+    fn test_uncurry_function() {
+        let code = "
+        [U8 -> U8 -> U8]
+        foo a b = 3.
+        ";
+        let module = parse_str(code).unwrap();
+        let typed = module.deduce_types(&TypeScope::new()).unwrap();
+        let f = typed.get_function("foo").unwrap();
+        let ft = &f.body.t;
+        let uncurried = ft.uncurry();
+        assert_eq!(uncurried.len(), 3);
+        assert_eq!(uncurried[0], &TypeExpression::Atomic(AtomicType::Function));
+        assert_eq!(uncurried[1], &TypeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B8))));
     }
 }

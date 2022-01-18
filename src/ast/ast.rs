@@ -1,3 +1,4 @@
+use super::concrete_type::ConcreteType;
 use super::scope::NameScope;
 use super::scope::TypeScope;
 use super::type_info::AtomicKind;
@@ -81,7 +82,7 @@ pub struct Binding<Type> {
 pub struct Function<Type> {
     name: String,
     context: ConstraintContext<Type>,
-    body: Expression<Type>,
+    pub(super) body: Expression<Type>,
     type_vars: TypeVars,
     p: Position,
 }
@@ -103,6 +104,8 @@ pub struct TypeConstructor {
     pub enum_index: usize,
     pub params: Vec<TypeExpression>,
     pub parent_type: TypeExpression,
+    // type_vars correspond to the parent type,
+    // e.g for `data Foo a b = Bar a | Baz b.` both Bar and Baz shall have two type vars
     pub type_vars: TypeVars,
     p: Position,
 }
@@ -145,6 +148,24 @@ impl<Type> Module<Type> {
 
     pub(super) fn push_type(&mut self, t: SumType) {
         self.types.push(t);
+    }
+
+    pub(super) fn get_function<'a>(&'a self, name: &str) -> Option<&'a Function<Type>> {
+        for f in self.functions.iter() {
+            if f.name == name {
+                return Some(f);
+            }
+        }
+        None
+    }
+
+    pub(super) fn get_type<'a>(&'a self, name: &str) -> Option<&'a SumType> {
+        for t in self.types.iter() {
+            if t.name == name {
+                return Some(t);
+            }
+        }
+        None
     }
 }
 
@@ -228,6 +249,28 @@ impl TypeConstructor {
             self.p.to_owned(),
         )
     }
+
+    fn as_tuple(
+        &self,
+        solution: &Solution<AtomicType>,
+        m: &Module<TypeExpression>,
+    ) -> Result<ConcreteType, ErrorCause> {
+        match self.params.len() {
+            0 => todo!(),
+            1 => ConcreteType::new(
+                &solution.translate_type(self.params.first().unwrap().to_owned()),
+                m,
+            ),
+            _ => {
+                let rv: Result<Vec<_>, _> = self
+                    .params
+                    .iter()
+                    .map(|t| ConcreteType::new(&solution.translate_type(t.to_owned()), m))
+                    .collect();
+                Ok(ConcreteType::Tuple(rv?))
+            }
+        }
+    }
 }
 
 impl SumType {
@@ -242,6 +285,32 @@ impl SumType {
             arity,
             constructors,
             p,
+        }
+    }
+
+    pub(super) fn as_concrete_type(
+        &self,
+        params: Vec<TypeExpression>,
+        m: &Module<TypeExpression>,
+    ) -> Result<ConcreteType, ErrorCause> {
+        assert!(!self.constructors.is_empty());
+
+        let solution = Solution::<AtomicType>::new(params, 0);
+        let rv: Result<Vec<_>, _> = self
+            .constructors
+            .iter()
+            .map(|tc| tc.as_tuple(&solution, m))
+            .collect();
+        let r = rv?;
+        if self.constructors.len() > 1 {
+            Ok(ConcreteType::Enum(
+                r.into_iter()
+                    .enumerate()
+                    .map(|(i, t)| (i as u8, t))
+                    .collect(),
+            ))
+        } else {
+            Ok(r.into_iter().next().unwrap())
         }
     }
 }
@@ -1426,7 +1495,8 @@ mod tests {
     #[test]
     fn test_deduce_kinds() {
         let code = "data Toto a b = Mo (b a).";
-        let module = parse_str(code).unwrap();
+        let mut module = parse_str(code).unwrap();
+        module.generate_type_constructors();
         let typed = module.deduce_types(&TypeScope::new()).unwrap();
         let kind_scope = typed.deduce_data_kinds().unwrap();
         let toto_kind = kind_scope.get("Toto").unwrap();
@@ -1441,5 +1511,23 @@ mod tests {
             ),
         );
         assert_eq!(toto_kind, &expected_toto_kind);
+    }
+
+    #[test]
+    fn test_check_kinds_error() {
+        let code = "data Foo a b = Bar (b a) | Baz b.";
+        let mut module = parse_str(code).unwrap();
+        module.generate_type_constructors();
+        let typed = module.deduce_types(&TypeScope::new()).unwrap();
+        assert!(typed.check_kinds().is_err());
+    }
+
+    #[test]
+    fn test_check_kinds_ok() {
+        let code = "data Foo a b = Bar (b a) | Baz.";
+        let mut module = parse_str(code).unwrap();
+        module.generate_type_constructors();
+        let typed = module.deduce_types(&TypeScope::new()).unwrap();
+        assert!(typed.check_kinds().is_ok());
     }
 }

@@ -1,10 +1,10 @@
+use super::type_info::{CompositeExpression, TypeExpression};
+use super::type_var_allocator::TypeVarAllocator;
+use super::type_vars::TypeVars;
 use crate::error::Error;
 use crate::error::ErrorCause;
 use crate::error::Mismatchable;
 use crate::position::Position;
-use super::type_info::{CompositeExpression, TypeExpression};
-use super::type_var_allocator::TypeVarAllocator;
-use super::type_vars::TypeVars;
 use crate::util::max_options;
 use crate::util::var_from_number;
 use std::collections::HashMap;
@@ -206,7 +206,7 @@ pub(super) struct Solution<AT> {
 }
 
 impl<AT: Clone> Solution<AT> {
-    fn new(rules: Vec<CompositeExpression<AT>>, free_vars_count: usize) -> Self {
+    pub(super) fn new(rules: Vec<CompositeExpression<AT>>, free_vars_count: usize) -> Self {
         Self {
             rules,
             free_vars_count,

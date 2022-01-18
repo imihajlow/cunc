@@ -6,6 +6,8 @@ mod type_var_allocator;
 mod type_solver;
 mod builtin_scope;
 mod sizeof;
+mod concrete_type;
+mod instance;
 mod type_vars;
 
 use type_info::TypeExpression;
