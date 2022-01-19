@@ -905,6 +905,25 @@ impl Lambda<VariableType> {
     }
 }
 
+impl Function<TypeExpression> {
+    fn instantiate(
+        &self,
+        t: &TypeExpression,
+        m: &Module<TypeExpression>,
+    ) -> Result<TypeVarsMapping, ErrorCause> {
+        let mut solver: Solver<AtomicType> = Solver::new();
+        solver.announce_vars(&self.type_vars);
+        let index = self.type_vars.get_vars_count();
+        solver.add_rule(index, t.to_owned());
+        solver.add_rule(index, self.body.t.to_owned());
+        let solution = solver.solve().map_err(|e| e.into_error_cause())?;
+        if solution.get_free_vars_count() != 0 {
+            return Err(ErrorCause::UnresolvedGenericVars);
+        }
+        TypeVarsMapping::new(self.type_vars.get_vars_count(), solution, m)
+    }
+}
+
 // translate_types
 impl Lambda<VariableType> {
     fn translate_types(self, solution: &Solution<AtomicType>) -> Lambda<TypeExpression> {

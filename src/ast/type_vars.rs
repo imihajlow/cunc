@@ -1,7 +1,13 @@
 use std::fmt;
 
-use super::{type_solver::Solution, type_info::{AtomicType, TypeExpression}};
+use crate::error::ErrorCause;
+
+use super::ast::Module;
 use super::concrete_type::ConcreteType;
+use super::{
+    type_info::{AtomicType, TypeExpression},
+    type_solver::Solution,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeVars {
@@ -24,10 +30,15 @@ impl TypeVars {
 }
 
 impl TypeVarsMapping {
-    pub(super) fn new(range: usize, solution: Solution<AtomicType>) -> Self {
-        // Self(0..range
-            // .map(|i| solution.translate_var_index(i)));
-        todo!()
+    pub(super) fn new(
+        range: usize,
+        solution: Solution<AtomicType>,
+        m: &Module<TypeExpression>,
+    ) -> Result<Self, ErrorCause> {
+        let rv: Result<Vec<_>, _> = (0..range)
+            .map(|i| ConcreteType::new(&solution.translate_var_index(i), m))
+            .collect();
+        Ok(Self(rv?))
     }
 }
 
