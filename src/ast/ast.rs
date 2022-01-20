@@ -38,58 +38,62 @@ pub(super) struct OptionalType(pub Option<TypeExpression>);
 struct VariableType(pub usize);
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Expression<Type> {
+pub struct Expression<Type, Id> {
     pub t: Type,
-    pub e: ExpressionVariant<Type>,
+    pub e: ExpressionVariant<Type, Id>,
     pub p: Position,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ExpressionVariant<Type> {
-    Application(Box<Expression<Type>>, Box<Expression<Type>>),
+pub enum ExpressionVariant<Type, Id> {
+    Application(Box<Expression<Type, Id>>, Box<Expression<Type, Id>>),
     IntConstant(u64),
-    Variable(String),
-    Abstraction(Lambda<Type>),
-    Let(Binding<Type>, Box<Expression<Type>>, Box<Expression<Type>>),
-    Pmatch(Box<Expression<Type>>, Vec<Case<Type>>),
-    Record(Vec<Expression<Type>>),
+    Variable(Id),
+    Abstraction(Lambda<Type, Id>),
+    Let(
+        Binding<Type, Id>,
+        Box<Expression<Type, Id>>,
+        Box<Expression<Type, Id>>,
+    ),
+    Pmatch(Box<Expression<Type, Id>>, Vec<Case<Type, Id>>),
+    Record(Vec<Expression<Type, Id>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Case<Type> {
+pub struct Case<Type, Id> {
     tc: TypeConstructor,
-    params: Vec<Binding<Type>>,
-    body: Expression<Type>,
+    params: Vec<Binding<Type, Id>>,
+    body: Expression<Type, Id>,
     p: Position,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Lambda<Type> {
-    param: Binding<Type>,
+pub struct Lambda<Type, Id> {
+    param: Binding<Type, Id>,
     return_type: Type,
-    tail: Box<Expression<Type>>,
+    tail: Box<Expression<Type, Id>>,
     p: Position,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Binding<Type> {
-    pub name: String,
+pub struct Binding<Type, Id> {
+    pub name: Id,
     t: Type,
     p: Position,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Function<Type> {
-    name: String,
+pub struct Function<Type, Id> {
+    name: Id,
     context: ConstraintContext<Type>,
-    pub(super) body: Expression<Type>,
+    pub(super) body: Expression<Type, Id>,
     type_vars: TypeVars,
     p: Position,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Module<Type> {
-    functions: Vec<Function<Type>>,
+pub struct Module<Type, Id> {
+    functions: Vec<Function<Type, Id>>,
     types: Vec<SumType>,
 }
 
@@ -118,11 +122,11 @@ pub struct SumType {
     p: Position,
 }
 
-impl<Type> Case<Type> {
+impl<Type, Id> Case<Type, Id> {
     pub(super) fn new(
         tc: TypeConstructor,
-        params: Vec<Binding<Type>>,
-        body: Expression<Type>,
+        params: Vec<Binding<Type, Id>>,
+        body: Expression<Type, Id>,
         p: Position,
     ) -> Self {
         Self {
@@ -134,7 +138,7 @@ impl<Type> Case<Type> {
     }
 }
 
-impl<Type> Module<Type> {
+impl<Type, Id: PartialEq> Module<Type, Id> {
     pub(super) fn new() -> Self {
         Self {
             functions: Vec::new(),
@@ -142,7 +146,7 @@ impl<Type> Module<Type> {
         }
     }
 
-    pub(super) fn push_function(&mut self, f: Function<Type>) {
+    pub(super) fn push_function(&mut self, f: Function<Type, Id>) {
         self.functions.push(f);
     }
 
@@ -150,19 +154,22 @@ impl<Type> Module<Type> {
         self.types.push(t);
     }
 
-    pub(super) fn get_function<'a>(&'a self, name: &str) -> Option<&'a Function<Type>> {
-        for f in self.functions.iter() {
-            if f.name == name {
-                return Some(f);
-            }
-        }
-        None
-    }
-
     pub(super) fn get_type<'a>(&'a self, name: &str) -> Option<&'a SumType> {
         for t in self.types.iter() {
             if t.name == name {
                 return Some(t);
+            }
+        }
+        None
+    }
+}
+
+// TODO generic implementation supporting name being &str for Id=String and &Id
+impl<Type> Module<Type, String> {
+    pub(super) fn get_function<'a>(&'a self, name: &str) -> Option<&'a Function<Type, String>> {
+        for f in self.functions.iter() {
+            if f.name == name {
+                return Some(f);
             }
         }
         None
@@ -198,13 +205,13 @@ impl TypeConstructor {
     }
 
     /// Create the type constructor function.
-    fn create_function(&self, has_enum_index: bool) -> Function<OptionalType> {
+    fn create_function(&self, has_enum_index: bool) -> Function<OptionalType, String> {
         let bindings: Vec<_> = self
             .params
             .iter()
             .enumerate()
             .map(|(i, t)| {
-                Binding::<OptionalType>::new(
+                Binding::<OptionalType, String>::new(
                     format!("_{i}"),
                     OptionalType(Some(t.to_owned())),
                     Position::Builtin,
@@ -212,7 +219,7 @@ impl TypeConstructor {
             })
             .collect();
         let parts_iter = self.params.iter().enumerate().map(|(i, t)| {
-            Expression::<OptionalType>::new(
+            Expression::<OptionalType, String>::new(
                 ExpressionVariant::Variable(format!("_{i}")),
                 Position::Builtin,
                 Some(t.to_owned()),
@@ -221,7 +228,7 @@ impl TypeConstructor {
 
         let record = if has_enum_index {
             ExpressionVariant::Record(
-                std::iter::once(Expression::<OptionalType>::new(
+                std::iter::once(Expression::<OptionalType, String>::new(
                     ExpressionVariant::IntConstant(self.enum_index as u64),
                     Position::Builtin,
                     Some(TypeExpression::Atomic(AtomicType::Int(IntType::new(
@@ -235,12 +242,12 @@ impl TypeConstructor {
         } else {
             ExpressionVariant::Record(parts_iter.collect())
         };
-        let body = Expression::<OptionalType>::new(
+        let body = Expression::<OptionalType, String>::new(
             record,
             self.p.to_owned(),
             Some(self.parent_type.to_owned()),
         );
-        Function::<OptionalType>::new_curry(
+        Function::<OptionalType, String>::new_curry(
             self.name.to_owned(),
             ConstraintContext::new(),
             bindings,
@@ -253,7 +260,7 @@ impl TypeConstructor {
     fn as_tuple(
         &self,
         solution: &Solution<AtomicType>,
-        m: &Module<TypeExpression>,
+        m: &Module<TypeExpression, String>,
     ) -> Result<ConcreteType, ErrorCause> {
         match self.params.len() {
             0 => todo!(),
@@ -291,7 +298,7 @@ impl SumType {
     pub(super) fn as_concrete_type(
         &self,
         params: Vec<TypeExpression>,
-        m: &Module<TypeExpression>,
+        m: &Module<TypeExpression, String>,
     ) -> Result<ConcreteType, ErrorCause> {
         assert!(!self.constructors.is_empty());
 
@@ -315,7 +322,7 @@ impl SumType {
     }
 }
 
-impl<Type> Module<Type> {
+impl<Type> Module<Type, String> {
     /// Build a graph of dependencies between functions.
     fn build_dependency_graph(&self) -> ObjectGraph<String> {
         let mut scope = NameScope::new();
@@ -383,7 +390,7 @@ impl TypeAssignment {
     }
 }
 
-impl Module<OptionalType> {
+impl Module<OptionalType, String> {
     pub(super) fn generate_type_constructors(&mut self) {
         for t in self.types.iter() {
             for c in t.constructors.iter() {
@@ -396,15 +403,15 @@ impl Module<OptionalType> {
     pub(super) fn deduce_types(
         &self,
         parent_scope: &TypeScope<TypeAssignment>,
-    ) -> Result<Module<TypeExpression>, Error> {
-        let function_by_name: HashMap<String, &Function<_>> =
+    ) -> Result<Module<TypeExpression, String>, Error> {
+        let function_by_name: HashMap<String, &Function<_, _>> =
             HashMap::from_iter(self.functions.iter().map(|f| (f.name.to_string(), f)));
         let dep_graph = self.build_dependency_graph();
         let toporder = dep_graph
             .find_strongly_connected()
             .inverse_topsort()
             .unwrap();
-        let mut result: Module<TypeExpression> = Module::new();
+        let mut result: Module<TypeExpression, String> = Module::new();
         let mut scope: TypeScope<TypeAssignment> = parent_scope.push();
 
         for group in toporder.into_iter() {
@@ -420,7 +427,7 @@ impl Module<OptionalType> {
                     .map_err(|c| Error::new(c, Position::clone(pos)))?;
             }
             // Actually process functions
-            let mut var_annotated_fns: Vec<Function<VariableType>> = Vec::new();
+            let mut var_annotated_fns: Vec<Function<VariableType, String>> = Vec::new();
             for fname in group.iter() {
                 let function = function_by_name[fname];
                 let annotated_function =
@@ -455,7 +462,7 @@ impl Module<OptionalType> {
     }
 }
 
-impl Module<TypeExpression> {
+impl Module<TypeExpression, String> {
     pub(super) fn deduce_data_kinds(&self) -> Result<TypeScope<KindExpression>, Error> {
         let toporder = self.build_types_top_order()?;
         let mut scope: TypeScope<KindExpression> = TypeScope::new();
@@ -501,7 +508,7 @@ impl Module<TypeExpression> {
 }
 
 // collect_refs
-impl<Type> ExpressionVariant<Type> {
+impl<Type> ExpressionVariant<Type, String> {
     /// Collect toplevel names referenced by this expression.
     fn collect_refs(&self, scope: &mut NameScope, result: &mut HashSet<String>) {
         use ExpressionVariant::*;
@@ -541,7 +548,7 @@ impl<Type> ExpressionVariant<Type> {
     }
 }
 
-impl<Type> Case<Type> {
+impl<Type> Case<Type, String> {
     fn collect_refs(&self, scope: &mut NameScope, result: &mut HashSet<String>) {
         scope.push();
         for b in self.params.iter() {
@@ -552,7 +559,7 @@ impl<Type> Case<Type> {
     }
 }
 
-impl<Type> Lambda<Type> {
+impl<Type> Lambda<Type, String> {
     fn collect_refs(&self, scope: &mut NameScope, result: &mut HashSet<String>) {
         scope.push();
         scope.add_name(&self.param.name);
@@ -563,7 +570,7 @@ impl<Type> Lambda<Type> {
 // end collect_refs
 
 // assign_type_vars
-impl Expression<OptionalType> {
+impl Expression<OptionalType, String> {
     /// Assign a new type variable to every part of the expression and to the expression itself,
     /// simultaniously adding rules to type solver.
     fn assign_type_vars(
@@ -572,7 +579,7 @@ impl Expression<OptionalType> {
         solver: &mut Solver<AtomicType>,
         allocator: &mut TypeVarAllocator,
         constraint_context: &mut ConstraintContext<VariableType>,
-    ) -> Result<Expression<VariableType>, Error> {
+    ) -> Result<Expression<VariableType, String>, Error> {
         use ExpressionVariant::*;
         let my_var_index = allocator.allocate(&self.p);
         let my_position = Position::clone(&self.p);
@@ -592,7 +599,7 @@ impl Expression<OptionalType> {
                     TypeExpression::Var(my_var_index),
                 );
                 solver.add_rule(head_index, fn_type);
-                Ok(Expression::<VariableType>::new(
+                Ok(Expression::<VariableType, String>::new(
                     Application(annotated_a, annotated_b),
                     my_position,
                     my_var_index,
@@ -606,7 +613,7 @@ impl Expression<OptionalType> {
                 let constraint_index = allocator.allocate(&my_position);
                 solver.add_rule(constraint_index, num_constraint);
                 constraint_context.add(VariableType(constraint_index), &my_position);
-                Ok(Expression::<VariableType>::new(
+                Ok(Expression::<VariableType, String>::new(
                     IntConstant(*x),
                     my_position,
                     my_var_index,
@@ -636,7 +643,7 @@ impl Expression<OptionalType> {
                                 allocator.leave_function();
                             }
                         }
-                        Ok(Expression::<VariableType>::new(
+                        Ok(Expression::<VariableType, String>::new(
                             Variable(name.to_string()),
                             my_position,
                             my_var_index,
@@ -648,7 +655,7 @@ impl Expression<OptionalType> {
                 let annotated_lambda =
                     l.assign_type_vars(scope, solver, allocator, constraint_context)?;
                 solver.add_rule(my_var_index, annotated_lambda.get_overall_type());
-                Ok(Expression::<VariableType>::new(
+                Ok(Expression::<VariableType, String>::new(
                     Abstraction(annotated_lambda),
                     my_position,
                     my_var_index,
@@ -656,7 +663,7 @@ impl Expression<OptionalType> {
             }
             Let(binding, val, body) => {
                 let var_index = allocator.allocate(&binding.p);
-                let annotated_binding: Binding<VariableType> = Binding::new(
+                let annotated_binding: Binding<VariableType, String> = Binding::new(
                     binding.name.to_owned(),
                     VariableType(var_index),
                     Position::clone(&binding.p),
@@ -675,7 +682,7 @@ impl Expression<OptionalType> {
                 solver.add_rule(my_var_index, TypeExpression::Var(annotated_body.t.0));
                 solver.add_rule(var_index, TypeExpression::Var(annotated_val.t.0));
 
-                Ok(Expression::<VariableType>::new(
+                Ok(Expression::<VariableType, String>::new(
                     Let(
                         annotated_binding,
                         Box::new(annotated_val),
@@ -688,7 +695,7 @@ impl Expression<OptionalType> {
             Pmatch(e, v) => {
                 let annotated_e =
                     e.assign_type_vars(scope, solver, allocator, constraint_context)?;
-                let mut annotated_cases: Vec<Case<VariableType>> = Vec::new();
+                let mut annotated_cases: Vec<Case<VariableType, String>> = Vec::new();
                 for case in v.iter() {
                     let new_case = case.assign_type_vars(
                         scope,
@@ -700,14 +707,14 @@ impl Expression<OptionalType> {
                     solver.add_rule(my_var_index, TypeExpression::Var(new_case.body.t.0));
                     annotated_cases.push(new_case);
                 }
-                Ok(Expression::<VariableType>::new(
+                Ok(Expression::<VariableType, String>::new(
                     Pmatch(Box::new(annotated_e), annotated_cases),
                     my_position,
                     my_var_index,
                 ))
             }
             Record(v) => {
-                let mut annotated_v: Vec<Expression<VariableType>> = Vec::new();
+                let mut annotated_v: Vec<Expression<VariableType, String>> = Vec::new();
                 for e in v.iter() {
                     let annotated_e =
                         e.assign_type_vars(scope, solver, allocator, constraint_context)?;
@@ -715,7 +722,7 @@ impl Expression<OptionalType> {
                     solver.add_rule(var_index, e.t.0.as_ref().unwrap().to_owned()); // Records are always annotated
                     annotated_v.push(annotated_e);
                 }
-                Ok(Expression::<VariableType>::new(
+                Ok(Expression::<VariableType, String>::new(
                     Record(annotated_v),
                     my_position,
                     my_var_index,
@@ -725,7 +732,7 @@ impl Expression<OptionalType> {
     }
 }
 
-impl Case<OptionalType> {
+impl Case<OptionalType, String> {
     fn assign_type_vars(
         &self,
         scope: &TypeScope<TypeAssignment>,
@@ -733,7 +740,7 @@ impl Case<OptionalType> {
         allocator: &mut TypeVarAllocator,
         constraint_context: &mut ConstraintContext<VariableType>,
         parent_var_index: usize,
-    ) -> Result<Case<VariableType>, Error> {
+    ) -> Result<Case<VariableType, String>, Error> {
         let type_arity = self
             .tc
             .parent_type
@@ -745,7 +752,7 @@ impl Case<OptionalType> {
         assert_eq!(self.tc.params.len(), self.params.len());
         // The expression being matched should be of the type constructor's parent type:
         solver.add_rule(parent_var_index, self.tc.parent_type.remap_vars(&allocator));
-        let mut annotated_params: Vec<Binding<VariableType>> = Vec::new();
+        let mut annotated_params: Vec<Binding<VariableType, String>> = Vec::new();
         for (i, param) in self.params.iter().enumerate() {
             let tc_param = &self.tc.params[i];
             let param_var_index = allocator.allocate(&param.p);
@@ -778,7 +785,7 @@ impl Case<OptionalType> {
     }
 }
 
-impl Lambda<OptionalType> {
+impl Lambda<OptionalType, String> {
     /// Assign type variables, simultaniously adding rules to type solver.
     /// Returns annotated Lambda and its type.
     fn assign_type_vars(
@@ -787,11 +794,11 @@ impl Lambda<OptionalType> {
         solver: &mut Solver<AtomicType>,
         allocator: &mut TypeVarAllocator,
         constraint_context: &mut ConstraintContext<VariableType>,
-    ) -> Result<Lambda<VariableType>, Error> {
+    ) -> Result<Lambda<VariableType, String>, Error> {
         let mut local_scope = scope.push();
         // Annotate parameter
         let param_index = allocator.allocate(&self.param.p);
-        let new_param_binding: Binding<VariableType> = Binding::new(
+        let new_param_binding: Binding<VariableType, String> = Binding::new(
             self.param.name.to_owned(),
             VariableType(param_index),
             Position::clone(&self.param.p),
@@ -822,13 +829,13 @@ impl Lambda<OptionalType> {
     }
 }
 
-impl Function<OptionalType> {
+impl Function<OptionalType, String> {
     fn assign_type_vars(
         &self,
         scope: &TypeScope<TypeAssignment>,
         solver: &mut Solver<AtomicType>,
         allocator: &mut TypeVarAllocator,
-    ) -> Result<Function<VariableType>, Error> {
+    ) -> Result<Function<VariableType, String>, Error> {
         let my_index = scope.get(&self.name).unwrap().unwrap_local_name();
         let function_scope = scope.push();
         // TODO type_vars.get_vars_count must take context into account
@@ -870,11 +877,11 @@ impl ConstraintContext<OptionalType> {
     }
 }
 
-impl Function<VariableType> {
+impl Function<VariableType, String> {
     fn apply_solution(
         self,
         solution: &Solution<AtomicType>,
-    ) -> Result<Function<TypeExpression>, Error> {
+    ) -> Result<Function<TypeExpression, String>, Error> {
         let new_constraint_context = self.context.translate_types(solution).check_and_reduce()?;
         Ok(Function {
             name: self.name,
@@ -887,7 +894,7 @@ impl Function<VariableType> {
 }
 // end assign_type_vars
 
-impl Lambda<TypeExpression> {
+impl Lambda<TypeExpression, String> {
     fn get_overall_type(&self) -> TypeExpression {
         TypeExpression::new_function(
             TypeExpression::clone(&self.param.t),
@@ -896,7 +903,7 @@ impl Lambda<TypeExpression> {
     }
 }
 
-impl Lambda<VariableType> {
+impl Lambda<VariableType, String> {
     fn get_overall_type(&self) -> TypeExpression {
         TypeExpression::new_function(
             TypeExpression::Var(self.param.t.0),
@@ -905,11 +912,11 @@ impl Lambda<VariableType> {
     }
 }
 
-impl Function<TypeExpression> {
+impl Function<TypeExpression, String> {
     fn instantiate(
         &self,
         t: &TypeExpression,
-        m: &Module<TypeExpression>,
+        m: &Module<TypeExpression, String>,
     ) -> Result<TypeVarsMapping, ErrorCause> {
         let mut solver: Solver<AtomicType> = Solver::new();
         solver.announce_vars(&self.type_vars);
@@ -925,8 +932,8 @@ impl Function<TypeExpression> {
 }
 
 // translate_types
-impl Lambda<VariableType> {
-    fn translate_types(self, solution: &Solution<AtomicType>) -> Lambda<TypeExpression> {
+impl Lambda<VariableType, String> {
+    fn translate_types(self, solution: &Solution<AtomicType>) -> Lambda<TypeExpression, String> {
         Lambda {
             param: self.param.translate_types(solution),
             tail: Box::new(self.tail.translate_types(solution)),
@@ -936,8 +943,8 @@ impl Lambda<VariableType> {
     }
 }
 
-impl Binding<VariableType> {
-    fn translate_types(self, solution: &Solution<AtomicType>) -> Binding<TypeExpression> {
+impl Binding<VariableType, String> {
+    fn translate_types(self, solution: &Solution<AtomicType>) -> Binding<TypeExpression, String> {
         Binding {
             name: self.name,
             t: solution.translate_var_index(self.t.0),
@@ -946,8 +953,11 @@ impl Binding<VariableType> {
     }
 }
 
-impl ExpressionVariant<VariableType> {
-    fn translate_types(self, solution: &Solution<AtomicType>) -> ExpressionVariant<TypeExpression> {
+impl ExpressionVariant<VariableType, String> {
+    fn translate_types(
+        self,
+        solution: &Solution<AtomicType>,
+    ) -> ExpressionVariant<TypeExpression, String> {
         use ExpressionVariant::*;
         match self {
             Application(a, b) => Application(
@@ -971,8 +981,11 @@ impl ExpressionVariant<VariableType> {
     }
 }
 
-impl Expression<VariableType> {
-    fn translate_types(self, solution: &Solution<AtomicType>) -> Expression<TypeExpression> {
+impl Expression<VariableType, String> {
+    fn translate_types(
+        self,
+        solution: &Solution<AtomicType>,
+    ) -> Expression<TypeExpression, String> {
         Expression {
             t: solution.translate_var_index(self.t.0),
             p: self.p,
@@ -981,8 +994,8 @@ impl Expression<VariableType> {
     }
 }
 
-impl Case<VariableType> {
-    fn translate_types(self, solution: &Solution<AtomicType>) -> Case<TypeExpression> {
+impl Case<VariableType, String> {
+    fn translate_types(self, solution: &Solution<AtomicType>) -> Case<TypeExpression, String> {
         Case {
             tc: self.tc,
             params: self
@@ -1009,7 +1022,7 @@ impl ConstraintContext<VariableType> {
 // end translate_types
 
 // create_kind_rules
-impl Expression<TypeExpression> {
+impl Expression<TypeExpression, String> {
     fn create_kind_rules(
         &self,
         tva: &mut TypeVarAllocator,
@@ -1025,7 +1038,7 @@ impl Expression<TypeExpression> {
     }
 }
 
-impl ExpressionVariant<TypeExpression> {
+impl ExpressionVariant<TypeExpression, String> {
     fn create_kind_rules(
         &self,
         tva: &mut TypeVarAllocator,
@@ -1062,7 +1075,7 @@ impl ExpressionVariant<TypeExpression> {
     }
 }
 
-impl Case<TypeExpression> {
+impl Case<TypeExpression, String> {
     fn create_kind_rules(
         &self,
         tva: &mut TypeVarAllocator,
@@ -1076,7 +1089,7 @@ impl Case<TypeExpression> {
     }
 }
 
-impl Lambda<TypeExpression> {
+impl Lambda<TypeExpression, String> {
     fn create_kind_rules(
         &self,
         tva: &mut TypeVarAllocator,
@@ -1093,7 +1106,7 @@ impl Lambda<TypeExpression> {
     }
 }
 
-impl Binding<TypeExpression> {
+impl Binding<TypeExpression, String> {
     fn create_kind_rules(
         &self,
         tva: &mut TypeVarAllocator,
@@ -1126,7 +1139,7 @@ impl ConstraintContext<TypeExpression> {
     }
 }
 
-impl Function<TypeExpression> {
+impl Function<TypeExpression, String> {
     fn create_kind_rules(
         &self,
         tva: &mut TypeVarAllocator,
@@ -1150,9 +1163,9 @@ impl Function<TypeExpression> {
 }
 // end create_kind_rules
 
-impl Expression<TypeExpression> {
+impl Expression<TypeExpression, String> {
     pub(super) fn new(
-        e: ExpressionVariant<TypeExpression>,
+        e: ExpressionVariant<TypeExpression, String>,
         p: Position,
         t: TypeExpression,
     ) -> Self {
@@ -1160,9 +1173,9 @@ impl Expression<TypeExpression> {
     }
 }
 
-impl Expression<OptionalType> {
+impl Expression<OptionalType, String> {
     pub(super) fn new(
-        e: ExpressionVariant<OptionalType>,
+        e: ExpressionVariant<OptionalType, String>,
         p: Position,
         t: Option<TypeExpression>,
     ) -> Self {
@@ -1183,8 +1196,12 @@ impl Expression<OptionalType> {
     }
 }
 
-impl Expression<VariableType> {
-    pub(super) fn new(e: ExpressionVariant<VariableType>, p: Position, index: usize) -> Self {
+impl Expression<VariableType, String> {
+    pub(super) fn new(
+        e: ExpressionVariant<VariableType, String>,
+        p: Position,
+        index: usize,
+    ) -> Self {
         Self {
             e,
             p,
@@ -1193,7 +1210,7 @@ impl Expression<VariableType> {
     }
 }
 
-impl<Type> Expression<Type> {
+impl<Type, Id> Expression<Type, Id> {
     pub(super) fn into_application_vec(self) -> Vec<Self> {
         use ExpressionVariant::*;
         match self.e {
@@ -1207,11 +1224,11 @@ impl<Type> Expression<Type> {
     }
 }
 
-impl<Type> Function<Type> {
+impl<Type, Id> Function<Type, Id> {
     pub(super) fn new(
-        name: String,
+        name: Id,
         context: ConstraintContext<Type>,
-        body: Expression<Type>,
+        body: Expression<Type, Id>,
         type_vars: TypeVars,
         p: Position,
     ) -> Self {
@@ -1225,19 +1242,19 @@ impl<Type> Function<Type> {
     }
 }
 
-impl Function<OptionalType> {
+impl Function<OptionalType, String> {
     fn new_curry(
         name: String,
         context: ConstraintContext<OptionalType>,
-        params: Vec<Binding<OptionalType>>,
-        body: Expression<OptionalType>,
+        params: Vec<Binding<OptionalType, String>>,
+        body: Expression<OptionalType, String>,
         type_vars: TypeVars,
         p: Position,
     ) -> Self {
         let mut tail = body;
         for param in params.into_iter().rev() {
             let new_pos = param.p.merge(&tail.p);
-            tail = Expression::<OptionalType>::new(
+            tail = Expression::<OptionalType, String>::new(
                 ExpressionVariant::Abstraction(Lambda::new(
                     param,
                     tail.t.to_owned(),
@@ -1258,17 +1275,17 @@ impl Function<OptionalType> {
     }
 }
 
-impl<Type> Binding<Type> {
-    pub(super) fn new(name: String, t: Type, p: Position) -> Self {
+impl<Type, Id> Binding<Type, Id> {
+    pub(super) fn new(name: Id, t: Type, p: Position) -> Self {
         Self { name, t, p }
     }
 }
 
-impl<Type> Lambda<Type> {
+impl<Type, Id> Lambda<Type, Id> {
     pub(super) fn new(
-        param: Binding<Type>,
+        param: Binding<Type, Id>,
         return_type: Type,
-        tail: Expression<Type>,
+        tail: Expression<Type, Id>,
         p: Position,
     ) -> Self {
         Self {
@@ -1280,7 +1297,7 @@ impl<Type> Lambda<Type> {
     }
 
     // Deconstruct Lambda into parameter name and body
-    pub fn explode(self) -> (String, Expression<Type>) {
+    pub fn explode(self) -> (Id, Expression<Type, Id>) {
         (self.param.name, *self.tail)
     }
 }
@@ -1351,9 +1368,9 @@ impl PrefixFormatter for TypeExpression {
     }
 }
 
-impl<Type: PrefixFormatter> fmt::Display for ExpressionVariant<Type>
+impl<Type: PrefixFormatter, Id: fmt::Display> fmt::Display for ExpressionVariant<Type, Id>
 where
-    Expression<Type>: fmt::Display,
+    Expression<Type, Id>: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1395,16 +1412,16 @@ where
     }
 }
 
-impl<Type: PrefixFormatter> fmt::Display for Expression<Type> {
+impl<Type: PrefixFormatter, Id: fmt::Display> fmt::Display for Expression<Type, Id> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.e)?;
         self.t.write_with_prefix(f, " :: ")
     }
 }
 
-impl<Type: PrefixFormatter> fmt::Display for Lambda<Type>
+impl<Type: PrefixFormatter, Id: fmt::Display> fmt::Display for Lambda<Type, Id>
 where
-    Expression<Type>: fmt::Display,
+    Expression<Type, Id>: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let simply_nested = match self.tail.e {
@@ -1423,9 +1440,9 @@ where
     }
 }
 
-impl<Type: PrefixFormatter> fmt::Display for Case<Type>
+impl<Type: PrefixFormatter, Id: fmt::Display> fmt::Display for Case<Type, Id>
 where
-    Expression<Type>: fmt::Display,
+    Expression<Type, Id>: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} ", self.tc.name)?;
@@ -1465,14 +1482,14 @@ impl fmt::Display for SumType {
     }
 }
 
-impl<Type: PrefixFormatter> fmt::Display for Binding<Type> {
+impl<Type: PrefixFormatter, Id: fmt::Display> fmt::Display for Binding<Type, Id> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", &self.name)?;
         self.t.write_with_prefix(f, " :: ")
     }
 }
 
-impl<Type: PrefixFormatter> fmt::Display for Function<Type> {
+impl<Type: PrefixFormatter, Id: fmt::Display> fmt::Display for Function<Type, Id> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[")?;
         write!(f, "{}", self.context)?;
@@ -1494,7 +1511,7 @@ impl<Type: PrefixFormatter> fmt::Display for ConstraintContext<Type> {
     }
 }
 
-impl<Type: PrefixFormatter> fmt::Display for Module<Type> {
+impl<Type: PrefixFormatter, Id: fmt::Display> fmt::Display for Module<Type, Id> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for t in self.types.iter() {
             write!(f, "{}\n\n", t)?;

@@ -20,12 +20,12 @@ pub struct CuncParser;
 
 type TcMap = HashMap<String, TypeConstructor>;
 
-pub(super) fn parse_file(fname: &str) -> Result<Module<OptionalType>, Error> {
+pub(super) fn parse_file(fname: &str) -> Result<Module<OptionalType, String>, Error> {
     let code = std::fs::read_to_string(&fname).unwrap();
     parse_str(&code)
 }
 
-pub(super) fn parse_str(code: &str) -> Result<Module<OptionalType>, Error> {
+pub(super) fn parse_str(code: &str) -> Result<Module<OptionalType, String>, Error> {
     let root = match CuncParser::parse(Rule::main, &code) {
         Ok(ast) => ast,
         Err(e) => {
@@ -37,7 +37,7 @@ pub(super) fn parse_str(code: &str) -> Result<Module<OptionalType>, Error> {
     };
     // println!("{}", &root);
 
-    let mut result: Module<OptionalType> = Module::new();
+    let mut result: Module<OptionalType, String> = Module::new();
     let mut tc_map: TcMap = HashMap::new();
     for node in root.into_iter() {
         match node.as_rule() {
@@ -105,7 +105,7 @@ impl TypeVarAllocator {
     }
 }
 
-fn parse_function(pair: Pair<Rule>, tc_map: &TcMap) -> Result<Function<OptionalType>, Error> {
+fn parse_function(pair: Pair<Rule>, tc_map: &TcMap) -> Result<Function<OptionalType, String>, Error> {
     // pair: fn_decl
     // type_spec? ~ fn_idents ~ fn_body
     let pos = position_from_span(&pair.as_span());
@@ -141,13 +141,13 @@ fn parse_function(pair: Pair<Rule>, tc_map: &TcMap) -> Result<Function<OptionalT
 }
 
 fn substitute_return_type(
-    body: Expression<OptionalType>,
+    body: Expression<OptionalType, String>,
     rt: Option<TypeExpression>,
-) -> Result<Expression<OptionalType>, Error> {
+) -> Result<Expression<OptionalType, String>, Error> {
     match (&body.t.0, rt) {
         (None, None) => Ok(body),
         (Some(_), None) => Ok(body),
-        (None, Some(t)) => Ok(Expression::<OptionalType>::new(body.e, body.p, Some(t))),
+        (None, Some(t)) => Ok(Expression::<OptionalType, String>::new(body.e, body.p, Some(t))),
         (Some(_), Some(_)) => Err(Error::new(ErrorCause::MultipleTypeSpecification, body.p)),
     }
 }
@@ -156,8 +156,8 @@ fn substitute_return_type(
 fn curry(
     mut param_idents: Pairs<Rule>,
     types: Option<TypeExpression>,
-    body: Expression<OptionalType>,
-) -> Result<Expression<OptionalType>, Error> {
+    body: Expression<OptionalType, String>,
+) -> Result<Expression<OptionalType, String>, Error> {
     match param_idents.next() {
         None => substitute_return_type(body, types),
         Some(p) if p.as_str().len() == 0 => substitute_return_type(body, types),
@@ -178,22 +178,22 @@ fn curry(
             } else {
                 (None, None)
             };
-            let binding: Binding<OptionalType> = Binding::new(
+            let binding: Binding<OptionalType, String> = Binding::new(
                 param_name,
                 OptionalType(param_type),
                 Position::clone(&param_pos),
             );
             let inner_expression = curry(param_idents, rest_types, body)?;
             let my_position = param_pos.merge(&inner_expression.p);
-            let lambda: Lambda<OptionalType> = Lambda::new(
+            let lambda: Lambda<OptionalType, String> = Lambda::new(
                 binding,
                 OptionalType(None),
                 inner_expression,
                 Position::clone(&my_position),
             );
-            let abstraction: ExpressionVariant<OptionalType> =
+            let abstraction: ExpressionVariant<OptionalType, String> =
                 ExpressionVariant::Abstraction(lambda);
-            Ok(Expression::<OptionalType>::new(
+            Ok(Expression::<OptionalType, String>::new(
                 abstraction,
                 my_position,
                 None,
@@ -206,15 +206,15 @@ fn parse_expression(
     pair: Pair<Rule>,
     tva: &mut TypeVarAllocator,
     tc_map: &TcMap,
-) -> Result<Expression<OptionalType>, Error> {
+) -> Result<Expression<OptionalType, String>, Error> {
     let pos = position_from_span(&pair.as_span());
     match pair.as_rule() {
         Rule::expression => parse_expression(pair.into_inner().next().unwrap(), tva, tc_map),
         Rule::application => {
-            let mut collected_expr: Option<Expression<OptionalType>> = None;
+            let mut collected_expr: Option<Expression<OptionalType, String>> = None;
             for part in pair.into_inner() {
                 let part_position = position_from_span(&part.as_span());
-                let parsed_part: Expression<OptionalType> =
+                let parsed_part: Expression<OptionalType, String> =
                     if let Rule::op_expression = part.as_rule() {
                         parse_expression(part, tva, tc_map)?
                     } else {
@@ -233,7 +233,7 @@ fn parse_expression(
                             }
                             _ => unreachable!("{}", part),
                         };
-                        Expression::<OptionalType>::new(parsed_part, part_position, None)
+                        Expression::<OptionalType, String>::new(parsed_part, part_position, None)
                     };
                 collected_expr = match collected_expr {
                     None => Some(parsed_part),
@@ -266,21 +266,21 @@ fn parse_expression(
             let body_pair = inner.next().unwrap();
             assert!(body_pair.as_rule() == Rule::op_expression);
             let body = parse_expression(body_pair, tva, tc_map)?;
-            let binding: Binding<OptionalType> =
+            let binding: Binding<OptionalType, String> =
                 Binding::new(name, OptionalType(var_type_spec), name_pos);
             let ev = ExpressionVariant::Let(binding, Box::new(value), Box::new(body));
-            Ok(Expression::<OptionalType>::new(ev, pos, None))
+            Ok(Expression::<OptionalType, String>::new(ev, pos, None))
         }
         Rule::pmatch => {
             let mut inner = pair.into_inner();
             let expr_pair = inner.next().unwrap();
             let expr = parse_expression(expr_pair, tva, tc_map)?;
-            let mut cases: Vec<Case<OptionalType>> = Vec::new();
+            let mut cases: Vec<Case<OptionalType, String>> = Vec::new();
             for p in inner {
                 cases.push(parse_case(p, tva, tc_map)?);
             }
             let ev = ExpressionVariant::Pmatch(Box::new(expr), cases);
-            Ok(Expression::<OptionalType>::new(ev, pos, None))
+            Ok(Expression::<OptionalType, String>::new(ev, pos, None))
         }
         Rule::op_expression => {
             let climber = PrecClimber::new(vec![
@@ -290,10 +290,10 @@ fn parse_expression(
                     | Operator::new(Rule::op_mod, Assoc::Left),
             ]);
             let primary = |p| parse_expression(p, tva, tc_map);
-            let infix = |lhs: Result<Expression<OptionalType>, Error>,
+            let infix = |lhs: Result<Expression<OptionalType, String>, Error>,
                          op: Pair<Rule>,
-                         rhs: Result<Expression<OptionalType>, Error>|
-             -> Result<Expression<OptionalType>, Error> {
+                         rhs: Result<Expression<OptionalType, String>, Error>|
+             -> Result<Expression<OptionalType, String>, Error> {
                 let lhs_ok = lhs?;
                 let rhs_ok = rhs?;
                 let op_name = match op.as_rule() {
@@ -304,9 +304,9 @@ fn parse_expression(
                     Rule::op_mod => "__mod__",
                     _ => unreachable!(),
                 };
-                let op_ev = ExpressionVariant::<OptionalType>::Variable(op_name.to_string());
+                let op_ev = ExpressionVariant::<OptionalType, String>::Variable(op_name.to_string());
                 let op_pos = position_from_span(&op.as_span());
-                let op_expr = Expression::<OptionalType>::new(op_ev, op_pos, None);
+                let op_expr = Expression::<OptionalType, String>::new(op_ev, op_pos, None);
                 let op = Expression::new_application(
                     Expression::new_application(op_expr, lhs_ok),
                     rhs_ok,
@@ -323,7 +323,7 @@ fn parse_case(
     pair: Pair<Rule>,
     tva: &mut TypeVarAllocator,
     tc_map: &TcMap,
-) -> Result<Case<OptionalType>, Error> {
+) -> Result<Case<OptionalType, String>, Error> {
     assert_eq!(pair.as_rule(), Rule::case);
     let mut inner = pair.into_inner();
     let pattern_p = inner.next().unwrap();
@@ -345,14 +345,14 @@ fn parse_case(
     let tc_params: Vec<_> = pattern_inner
         .map(|p| {
             let param_pos = position_from_span(&p.as_span());
-            Binding::<OptionalType>::new(p.as_str().to_owned(), OptionalType(None), param_pos)
+            Binding::<OptionalType, String>::new(p.as_str().to_owned(), OptionalType(None), param_pos)
         })
         .collect();
     let body_p = inner.next().unwrap();
     assert_eq!(body_p.as_rule(), Rule::op_expression);
     let body = parse_expression(body_p, tva, tc_map)?;
 
-    Ok(Case::<OptionalType>::new(
+    Ok(Case::<OptionalType, String>::new(
         TypeConstructor::clone(&tc),
         tc_params,
         body,
@@ -640,35 +640,35 @@ mod tests {
         assert_eq!(lvl1.len(), 3);
         assert_eq!(
             lvl1[0].e,
-            ExpressionVariant::<OptionalType>::Variable("__sub__".to_string())
+            ExpressionVariant::<OptionalType, String>::Variable("__sub__".to_string())
         );
         assert_eq!(
             lvl1[2].e,
-            ExpressionVariant::<OptionalType>::Variable("d".to_string())
+            ExpressionVariant::<OptionalType, String>::Variable("d".to_string())
         );
         let mut lvl2 = lvl1.drain(1..2).next().unwrap().into_application_vec();
         assert_eq!(lvl2.len(), 3);
         assert_eq!(
             lvl2[0].e,
-            ExpressionVariant::<OptionalType>::Variable("__add__".to_string())
+            ExpressionVariant::<OptionalType, String>::Variable("__add__".to_string())
         );
         assert_eq!(
             lvl2[1].e,
-            ExpressionVariant::<OptionalType>::Variable("a".to_string())
+            ExpressionVariant::<OptionalType, String>::Variable("a".to_string())
         );
         let lvl3 = lvl2.drain(2..).next().unwrap().into_application_vec();
         assert_eq!(lvl3.len(), 3);
         assert_eq!(
             lvl3[0].e,
-            ExpressionVariant::<OptionalType>::Variable("__mul__".to_string())
+            ExpressionVariant::<OptionalType, String>::Variable("__mul__".to_string())
         );
         assert_eq!(
             lvl3[1].e,
-            ExpressionVariant::<OptionalType>::Variable("b".to_string())
+            ExpressionVariant::<OptionalType, String>::Variable("b".to_string())
         );
         assert_eq!(
             lvl3[2].e,
-            ExpressionVariant::<OptionalType>::Variable("c".to_string())
+            ExpressionVariant::<OptionalType, String>::Variable("c".to_string())
         );
     }
 }

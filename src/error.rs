@@ -1,7 +1,10 @@
+use itertools::Itertools;
+
 use crate::position::Position;
 use crate::ast::type_info::AtomicTypeParseError;
 use crate::ast::type_info::KindExpression;
 use crate::ast::type_info::TypeExpression;
+use crate::util::var_from_number;
 use std::fmt;
 
 #[derive(Debug)]
@@ -25,6 +28,7 @@ pub enum ErrorCause {
     NotAConstraint(TypeExpression),
     RecursiveType(String),
     TypeConstructorNotFound(String),
+    UnresolvedGenericVars,
 }
 
 impl Error {
@@ -73,6 +77,7 @@ impl fmt::Display for ErrorCause {
             NotAConstraint(t) => write!(f, "`{}' is not a constraint", t),
             RecursiveType(s) => write!(f, "recursive types are not allowed, `{}' is recursive", s),
             TypeConstructorNotFound(s) => write!(f, "type constructor `{}' not found", s),
+            UnresolvedGenericVars => write!(f, "unresolved generic variables")
         }
     }
 }

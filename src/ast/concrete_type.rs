@@ -16,7 +16,7 @@ pub enum ConcreteType {
 }
 
 impl ConcreteType {
-    pub(super) fn new(t: &TypeExpression, m: &Module<TypeExpression>) -> Result<Self, ErrorCause> {
+    pub(super) fn new(t: &TypeExpression, m: &Module<TypeExpression, String>) -> Result<Self, ErrorCause> {
         use CompositeExpression::*;
         match t {
             Atomic(a) => {

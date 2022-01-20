@@ -33,7 +33,7 @@ impl TypeVarsMapping {
     pub(super) fn new(
         range: usize,
         solution: Solution<AtomicType>,
-        m: &Module<TypeExpression>,
+        m: &Module<TypeExpression, String>,
     ) -> Result<Self, ErrorCause> {
         let rv: Result<Vec<_>, _> = (0..range)
             .map(|i| ConcreteType::new(&solution.translate_var_index(i), m))

@@ -32,7 +32,7 @@ pub enum Aexp {
 }
 
 impl Cexp {
-    fn from_expression(e: Expression<TypeExpression>, c: Var, allocator: &mut VarAllocator) -> Self {
+    fn from_expression(e: Expression<TypeExpression, String>, c: Var, allocator: &mut VarAllocator) -> Self {
         use ExpressionVariant::*;
         match e.e {
             Variable(_) | IntConstant(_) => {
@@ -138,7 +138,7 @@ enum EitherExpr {
     Complex(Var, Cexp)
 }
 
-fn into_cexp_if_needed(e: Expression<TypeExpression>, allocator: &mut VarAllocator) -> EitherExpr {
+fn into_cexp_if_needed(e: Expression<TypeExpression, String>, allocator: &mut VarAllocator) -> EitherExpr {
     use ExpressionVariant::*;
     match e.e {
         Variable(_) | IntConstant(_) => {
@@ -154,7 +154,7 @@ fn into_cexp_if_needed(e: Expression<TypeExpression>, allocator: &mut VarAllocat
 }
 
 impl Value {
-    fn from_expression(e: Expression<TypeExpression>) -> Option<Self> {
+    fn from_expression(e: Expression<TypeExpression, String>) -> Option<Self> {
         use ExpressionVariant::*;
         match e.e {
             Variable(s) => Some(Value::Var(Var::User(s))),
@@ -180,7 +180,7 @@ impl Var {
         Var::Auto(allocator.alloc())
     }
 
-    fn from_binding(b: Binding<TypeExpression>) -> Self {
+    fn from_binding(b: Binding<TypeExpression, String>) -> Self {
         Var::User(b.name)
     }
 }

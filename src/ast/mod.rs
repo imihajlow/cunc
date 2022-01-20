@@ -19,7 +19,7 @@ pub use ast::ExpressionVariant;
 pub use ast::Binding;
 pub use sizeof::Sizeof;
 
-pub fn parse_and_deduce(fname: &str) -> Result<Module<TypeExpression>, Error> {
+pub fn parse_and_deduce(fname: &str) -> Result<Module<TypeExpression, String>, Error> {
     let mut m = parse::parse_file(fname)?;
     m.generate_type_constructors();
     let builtin = builtin_scope::create_builtin_scope();
