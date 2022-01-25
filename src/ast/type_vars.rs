@@ -14,8 +14,6 @@ pub struct TypeVars {
     range: usize,
 }
 
-pub struct TypeVarsMapping(Vec<ConcreteType>);
-
 impl TypeVars {
     pub(super) fn new(range: usize) -> Self {
         Self { range }
@@ -27,18 +25,18 @@ impl TypeVars {
     pub(super) fn get_vars_count(&self) -> usize {
         self.range
     }
-}
 
-impl TypeVarsMapping {
-    pub(super) fn new(
-        range: usize,
-        solution: Solution<AtomicType>,
+    pub(super) fn instantiate(
+        &self,
         m: &Module<TypeExpression, String>,
-    ) -> Result<Self, ErrorCause> {
-        let rv: Result<Vec<_>, _> = (0..range)
-            .map(|i| ConcreteType::new(&solution.translate_var_index(i), m))
-            .collect();
-        Ok(Self(rv?))
+        solution: &Solution<AtomicType>,
+    ) -> Result<Vec<ConcreteType>, ErrorCause> {
+        (0..self.range)
+            .map(|i| {
+                let te = solution.translate_var_index(i);
+                ConcreteType::new(&te, m)
+            })
+            .collect()
     }
 }
 

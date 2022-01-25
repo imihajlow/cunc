@@ -6,30 +6,22 @@ use crate::error::ErrorCause;
 /// Class to check if certain name is a toplevel function (participating in dependency graph) or not.
 /// This does not check for anything besides that.
 pub(super) struct NameScope {
-    names: Vec<HashSet<String>>,
+    toplevel: HashSet<String>,
 }
 
 impl NameScope {
     pub fn new() -> Self {
         Self {
-            names: vec![HashSet::new()],
+            toplevel: HashSet::new(),
         }
     }
 
-    pub fn push(&mut self) {
-        self.names.push(HashSet::new())
-    }
-
-    pub fn pop(&mut self) {
-        self.names.pop();
-    }
-
-    pub fn add_name(&mut self, name: &str) {
-        self.names.last_mut().unwrap().insert(name.to_string());
+    pub fn add_toplevel(&mut self, name: &str) {
+        self.toplevel.insert(name.to_string());
     }
 
     pub fn is_toplevel(&self, name: &str) -> bool {
-        self.names.first().unwrap().contains(name)
+        self.toplevel.contains(name)
     }
 }
 

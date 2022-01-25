@@ -365,7 +365,11 @@ impl IntType {
     }
 
     pub(super) fn get_size(&self) -> usize {
-        self.bits as usize * 8
+        self.bits as usize
+    }
+
+    pub(super) fn as_short_string(&self) -> String {
+        format!("{self}")
     }
 }
 

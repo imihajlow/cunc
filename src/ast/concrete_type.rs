@@ -1,11 +1,12 @@
-use std::os::unix::prelude::CommandExt;
+use std::fmt::Formatter;
+use std::fmt::Write;
+use std::fmt;
 
-use crate::ast::ast::Function;
 use crate::error::ErrorCause;
 
-use super::ast::Module;
+use super::ast::{Module};
 use super::type_info::{AtomicType, CompositeExpression, IntType, TypeExpression};
-use super::type_solver::Solution;
+use itertools::Itertools;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConcreteType {
@@ -16,7 +17,10 @@ pub enum ConcreteType {
 }
 
 impl ConcreteType {
-    pub(super) fn new(t: &TypeExpression, m: &Module<TypeExpression, String>) -> Result<Self, ErrorCause> {
+    pub(super) fn new(
+        t: &TypeExpression,
+        m: &Module<TypeExpression, String>,
+    ) -> Result<Self, ErrorCause> {
         use CompositeExpression::*;
         match t {
             Atomic(a) => {
@@ -73,6 +77,50 @@ impl ConcreteType {
             Function(_, _) => 4, // TODO
         }
     }
+
+    pub(super) fn as_short_string(&self) -> String {
+        use ConcreteType::*;
+        match self {
+            Int(t) => t.as_short_string(),
+            Tuple(v) => {
+                format!("T{}", v.len()) +
+                &v.iter().map(|t| t.as_short_string()).collect::<String>()
+            }
+            Enum(v) => {
+                format!("E{}_", v.len()) +
+                &v.iter().map(|(i,t)| format!("{i}") + &t.as_short_string()).collect::<String>()
+            }
+            Function(a, b) => {
+                format!("F{}{}", a.as_short_string(), b.as_short_string())
+            }
+        }
+    }
+}
+
+impl fmt::Display for ConcreteType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
+        use ConcreteType::*;
+        match self {
+            Int(t) => write!(f, "{t}"),
+            Tuple(v) => {
+                f.write_str("(")?;
+                for s in v.iter().map(|t| format!("{t}")).intersperse(", ".to_string()) {
+                    f.write_str(&s)?;
+                }
+                f.write_str(")")
+            }
+            Enum(v) => {
+                f.write_str("(")?;
+                for s in v.iter().map(|(i,t)| format!("{i}:{t}")).intersperse(" | ".to_string()) {
+                    f.write_str(&s)?;
+                }
+                f.write_str(")")
+            }
+            Function(a, b) => {
+                write!(f, "{a} -> {b}")
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -111,10 +159,7 @@ mod tests {
                         Int(IntType::new(false, IntBits::B8)),
                     ])
                 ),
-                (
-                    1,
-                    Int(IntType::new(false, IntBits::B8))
-                ),
+                (1, Int(IntType::new(false, IntBits::B8))),
                 (
                     2,
                     Tuple(vec![
