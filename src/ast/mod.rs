@@ -9,6 +9,7 @@ mod sizeof;
 mod concrete_type;
 mod instance;
 mod type_vars;
+mod type_assignment;
 
 use type_info::TypeExpression;
 use crate::error::Error;
@@ -22,8 +23,7 @@ pub use sizeof::Sizeof;
 pub fn parse_and_deduce(fname: &str) -> Result<Module<TypeExpression, String>, Error> {
     let mut m = parse::parse_file(fname)?;
     m.generate_type_constructors();
-    let builtin = builtin_scope::create_builtin_scope();
-    let deduced = m.deduce_types(&builtin)?;
+    let deduced = m.deduce_types()?;
     println!("=== DEDUCED ===\n{}", deduced);
     deduced.check_kinds()?;
     Ok(deduced)

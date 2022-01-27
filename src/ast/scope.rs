@@ -62,4 +62,26 @@ impl<'a, T: Clone> TypeScope<'a, T> {
         self.bindings.insert(name.to_string(), T::clone(val));
         Ok(())
     }
+
+    pub fn convert<NewT: From<T> + Clone>(&self) -> TypeScope<'a, NewT> {
+        match self.parent {
+            None => TypeScope {
+                parent: None,
+                bindings: self
+                    .bindings
+                    .iter()
+                    .map(|(name, val)| (name.to_owned(), NewT::from(val.to_owned())))
+                    .collect(),
+            },
+            Some(p) => {
+                let mut result = p.convert::<NewT>();
+                for (name, val) in self.bindings.iter() {
+                    result
+                        .bindings
+                        .insert(name.to_owned(), NewT::from(val.to_owned()));
+                }
+                result
+            }
+        }
+    }
 }

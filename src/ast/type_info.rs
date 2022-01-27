@@ -543,7 +543,7 @@ mod tests {
         ";
         let mut module = parse_str(code).unwrap();
         module.generate_type_constructors();
-        let typed = module.deduce_types(&TypeScope::new()).unwrap();
+        let typed = module.deduce_types().unwrap();
         let y = typed.get_function("y").unwrap();
         let yt = &y.body.t;
         let uncurried = yt.uncurry();
@@ -565,7 +565,7 @@ mod tests {
         foo a b = 3.
         ";
         let module = parse_str(code).unwrap();
-        let typed = module.deduce_types(&TypeScope::new()).unwrap();
+        let typed = module.deduce_types().unwrap();
         let f = typed.get_function("foo").unwrap();
         let ft = &f.body.t;
         let uncurried = ft.uncurry();

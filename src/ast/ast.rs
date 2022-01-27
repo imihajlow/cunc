@@ -1,7 +1,10 @@
+
+use super::builtin_scope::BuiltinScope;
 use super::concrete_type::ConcreteType;
 use super::instance::MangledId;
 use super::scope::NameScope;
 use super::scope::TypeScope;
+use super::type_assignment::TypeAssignment;
 use super::type_info::AtomicKind;
 use super::type_info::AtomicType;
 use super::type_info::IntBits;
@@ -20,7 +23,7 @@ use crate::util::var_from_number;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::collections::VecDeque;
+
 use std::fmt;
 use std::iter;
 
@@ -101,6 +104,7 @@ pub struct Function<Type, Id> {
 pub struct Module<Type, Id> {
     functions: Vec<Function<Type, Id>>,
     types: Vec<SumType>,
+    builtin_scope: Option<BuiltinScope>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -128,6 +132,13 @@ pub struct SumType {
     p: Position,
 }
 
+#[derive(Clone, PartialEq)]
+enum SymbolClass {
+    Builtin,
+    Global,
+    Local,
+}
+
 impl<Type, Id> Case<Type, Id> {
     pub(super) fn new(
         tc: TypeConstructor,
@@ -145,10 +156,11 @@ impl<Type, Id> Case<Type, Id> {
 }
 
 impl<Type, Id: PartialEq> Module<Type, Id> {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(builtin_scope: Option<BuiltinScope>) -> Self {
         Self {
             functions: Vec::new(),
             types: Vec::new(),
+            builtin_scope,
         }
     }
 
@@ -330,10 +342,15 @@ impl SumType {
 
 impl<Type> Module<Type, String> {
     /// Build a graph of dependencies between functions.
-    fn build_dependency_graph(&self) -> ObjectGraph<String> {
-        let mut scope = NameScope::new();
+    fn build_dependency_graph(&self) -> Result<ObjectGraph<String>, Error> {
+        let mut scope: TypeScope<SymbolClass> = TypeScope::new();
+        if let Some(bi) = &self.builtin_scope {
+            for name in bi.name_iter() {
+                scope.set(name, &SymbolClass::Builtin).unwrap();
+            }
+        }
         for function in self.functions.iter() {
-            scope.add_toplevel(&function.name);
+            scope.set(&function.name, &SymbolClass::Global).map_err(|c| Error::new(c, function.p.to_owned()));
         }
         let mut result: ObjectGraph<String> = ObjectGraph::new();
         for function in self.functions.iter() {
@@ -342,13 +359,13 @@ impl<Type> Module<Type, String> {
                 refs.insert(n.to_owned());
                 ()
             };
-            function.body.collect_refs(&mut scope, &mut add_ref);
+            function.body.collect_refs(&scope, &mut add_ref);
             result.add_node_unique(&function.name);
             for name in refs.into_iter() {
                 result.add_edge_unique(&function.name, &name);
             }
         }
-        result
+        Ok(result)
     }
 
     /// Build a graph of dependencies between custom types
@@ -384,22 +401,6 @@ impl<Type> Module<Type, String> {
     }
 }
 
-/// Enum used in scopes.
-#[derive(Debug, Clone)]
-pub enum TypeAssignment {
-    ToplevelFunction(TypeVars, TypeExpression, ConstraintContext<TypeExpression>),
-    LocalName(usize),
-}
-
-impl TypeAssignment {
-    fn unwrap_local_name(&self) -> usize {
-        match self {
-            TypeAssignment::LocalName(x) => *x,
-            _ => panic!("Not a local name: {:?}", self),
-        }
-    }
-}
-
 impl Module<OptionalType, String> {
     pub(super) fn generate_type_constructors(&mut self) {
         for t in self.types.iter() {
@@ -410,19 +411,19 @@ impl Module<OptionalType, String> {
         }
     }
 
-    pub(super) fn deduce_types(
-        &self,
-        parent_scope: &TypeScope<TypeAssignment>,
-    ) -> Result<Module<TypeExpression, String>, Error> {
+    pub(super) fn deduce_types(&self) -> Result<Module<TypeExpression, String>, Error> {
         let function_by_name: HashMap<String, &Function<_, _>> =
             HashMap::from_iter(self.functions.iter().map(|f| (f.name.to_string(), f)));
-        let dep_graph = self.build_dependency_graph();
+        let dep_graph = self.build_dependency_graph()?;
         let toporder = dep_graph
             .find_strongly_connected()
             .inverse_topsort()
             .unwrap();
-        let mut result: Module<TypeExpression, String> = Module::new();
-        let mut scope: TypeScope<TypeAssignment> = parent_scope.push();
+        let mut result: Module<TypeExpression, String> = Module::new(self.builtin_scope.clone());
+        let mut scope: TypeScope<TypeAssignment> = match &self.builtin_scope {
+            Some(bi) => bi.as_type_scope(),
+            None => TypeScope::new(),
+        };
 
         for group in toporder.into_iter() {
             let mut group_scope = scope.push();
@@ -521,7 +522,11 @@ impl Module<TypeExpression, String> {
 impl<Type> Expression<Type, String> {
     /// Collect toplevel names referenced by this expression.
     /// For each referenced name together with its type a function is called.
-    fn collect_refs(&self, scope: &NameScope, f: &mut dyn FnMut(&str, &Type, &Position) -> ()) {
+    fn collect_refs(
+        &self,
+        scope: &TypeScope<SymbolClass>,
+        f: &mut dyn FnMut(&str, &Type, &Position) -> (),
+    ) {
         use ExpressionVariant::*;
         match &self.e {
             Application(a, b) => {
@@ -530,7 +535,8 @@ impl<Type> Expression<Type, String> {
             }
             IntConstant(_) => (),
             Variable(n) => {
-                if scope.is_toplevel(n) {
+                let class = scope.get(n).unwrap();
+                if class == &SymbolClass::Global {
                     f(n, &self.t, &self.p);
                 }
             }
@@ -539,7 +545,9 @@ impl<Type> Expression<Type, String> {
             }
             Let(b, val, body) => {
                 val.collect_refs(scope, f);
-                body.collect_refs(scope, f);
+                let mut inner_scope = scope.push();
+                inner_scope.set(&b.name, &SymbolClass::Local);
+                body.collect_refs(&inner_scope, f);
             }
             Pmatch(e, v) => {
                 e.collect_refs(scope, f);
@@ -559,14 +567,28 @@ impl<Type> Expression<Type, String> {
 }
 
 impl<Type> Case<Type, String> {
-    fn collect_refs(&self, scope: &NameScope, f: &mut dyn FnMut(&str, &Type, &Position) -> ()) {
-        self.body.collect_refs(scope, f);
+    fn collect_refs(
+        &self,
+        scope: &TypeScope<SymbolClass>,
+        f: &mut dyn FnMut(&str, &Type, &Position) -> (),
+    ) {
+        let mut inner_scope = scope.push();
+        for b in self.params.iter() {
+            inner_scope.set(&b.name, &SymbolClass::Local);
+        }
+        self.body.collect_refs(&inner_scope, f);
     }
 }
 
 impl<Type> Lambda<Type, String> {
-    fn collect_refs(&self, scope: &NameScope, f: &mut dyn FnMut(&str, &Type, &Position) -> ()) {
-        self.tail.collect_refs(scope, f);
+    fn collect_refs(
+        &self,
+        scope: &TypeScope<SymbolClass>,
+        f: &mut dyn FnMut(&str, &Type, &Position) -> (),
+    ) {
+        let mut inner_scope = scope.push();
+        inner_scope.set(&self.param.name, &SymbolClass::Local);
+        self.tail.collect_refs(&inner_scope, f)
     }
 }
 // end collect_refs
@@ -1346,7 +1368,7 @@ impl Expression<TypeExpression, String> {
         &self,
         sol: &Solution<AtomicType>,
         m: &Module<TypeExpression, String>,
-        scope: &NameScope,
+        scope: &TypeScope<SymbolClass>,
     ) -> Result<Expression<ConcreteType, MangledId>, Error> {
         let translated_type = sol.translate_type(self.t.to_owned());
         let concrete_type =
@@ -1355,28 +1377,27 @@ impl Expression<TypeExpression, String> {
         use ExpressionVariant::*;
         let ev: ExpressionVariant<ConcreteType, MangledId> = match &self.e {
             IntConstant(n) => IntConstant(*n),
-            Variable(name) => {
-                if scope.is_toplevel(&name) {
-                    Variable(
-                        m.get_function(&name)
-                            .unwrap()
-                            .get_mangled_instance_id(&translated_type, m)
-                            .map_err(|c| Error::new(c, self.p.to_owned()))?,
-                    )
-                } else {
-                    Variable(MangledId::Local(name.to_owned()))
-                }
-            }
+            Variable(name) => match scope.get(&name).unwrap() {
+                SymbolClass::Global => Variable(
+                    m.get_function(&name)
+                        .unwrap()
+                        .get_mangled_instance_id(&translated_type, m)
+                        .map_err(|c| Error::new(c, self.p.to_owned()))?,
+                ),
+                SymbolClass::Local => Variable(MangledId::Local(name.to_owned())),
+                SymbolClass::Builtin => todo!(),
+            },
             Application(a, b) => Application(
                 Box::new(a.instantiate(sol, m, scope)?),
                 Box::new(b.instantiate(sol, m, scope)?),
             ),
             Let(var, val, body) => {
-                let new_body = body.instantiate(sol, m, scope)?;
+                let mut inner_scope = scope.push();
+                inner_scope.set(&var.name, &SymbolClass::Local).unwrap();
                 Let(
                     var.instantiate(sol, m)?,
                     Box::new(val.instantiate(sol, m, scope)?),
-                    Box::new(new_body),
+                    Box::new(body.instantiate(sol, m, &inner_scope)?),
                 )
             }
             Abstraction(l) => Abstraction(l.instantiate(sol, m, scope)?),
@@ -1406,7 +1427,7 @@ fn pmatch_to_switch(
     cases: &Vec<Case<TypeExpression, String>>,
     sol: &Solution<AtomicType>,
     m: &Module<TypeExpression, String>,
-    scope: &NameScope,
+    scope: &TypeScope<SymbolClass>,
 ) -> Result<ExpressionVariant<ConcreteType, MangledId>, Error> {
     //! Transforms this:
     //!     match e {
@@ -1478,7 +1499,7 @@ impl Case<TypeExpression, String> {
         has_enum_offset: bool,
         sol: &Solution<AtomicType>,
         m: &Module<TypeExpression, String>,
-        scope: &NameScope,
+        scope: &TypeScope<SymbolClass>,
     ) -> Result<Expression<ConcreteType, MangledId>, Error> {
         let mut offset: usize = if has_enum_offset { 1 } else { 0 };
         let mut body = self.body.instantiate(sol, m, scope)?;
@@ -1499,7 +1520,11 @@ impl Case<TypeExpression, String> {
             };
             offset += instantiated_binding.t.get_size();
             body = Expression {
-                e: ExpressionVariant::Let(instantiated_binding, Box::new(offset_expr), Box::new(body)),
+                e: ExpressionVariant::Let(
+                    instantiated_binding,
+                    Box::new(offset_expr),
+                    Box::new(body),
+                ),
                 t: ret_type.to_owned(),
                 p: self.p.to_owned(),
             };
@@ -1530,14 +1555,18 @@ impl Lambda<TypeExpression, String> {
         &self,
         sol: &Solution<AtomicType>,
         m: &Module<TypeExpression, String>,
-        scope: &NameScope,
+        scope: &TypeScope<SymbolClass>,
     ) -> Result<Lambda<ConcreteType, MangledId>, Error> {
         let translated_type = sol.translate_type(self.return_type.to_owned());
+        let mut inner_scope = scope.push();
+        inner_scope
+            .set(&self.param.name, &SymbolClass::Local)
+            .unwrap();
         Ok(Lambda {
             param: self.param.instantiate(sol, m)?,
             return_type: ConcreteType::new(&translated_type, m)
                 .map_err(|c| Error::new(c, self.p.to_owned()))?,
-            tail: Box::new(self.tail.instantiate(sol, m, scope)?),
+            tail: Box::new(self.tail.instantiate(sol, m, &inner_scope)?),
             p: self.p.to_owned(),
         })
     }
@@ -1569,7 +1598,7 @@ impl Function<TypeExpression, String> {
         &self,
         sol: &Solution<AtomicType>,
         m: &Module<TypeExpression, String>,
-        scope: &mut NameScope,
+        scope: &TypeScope<SymbolClass>,
     ) -> Result<Function<ConcreteType, MangledId>, Error> {
         let generic_params = self
             .type_vars
@@ -1591,12 +1620,13 @@ impl Module<TypeExpression, String> {
     fn instantiate(
         &self,
         entry: (&str, &TypeExpression),
+        builtin_scope: &TypeScope<SymbolClass>,
     ) -> Result<Module<ConcreteType, MangledId>, Error> {
-        let mut result: Module<ConcreteType, MangledId> = Module::new();
+        let mut result: Module<ConcreteType, MangledId> = Module::new(None);
         let instances = self.collect_instance_refs(entry)?;
-        let mut scope = NameScope::new();
+        let mut scope = builtin_scope.push();
         for (n, _) in instances.iter() {
-            scope.add_toplevel(n);
+            scope.set(n, &SymbolClass::Global);
         }
         for (n, sol) in instances.into_iter() {
             let fun = self.get_function(&n).unwrap();
@@ -1628,6 +1658,15 @@ impl Module<TypeExpression, String> {
     }
 }
 // end instantiation
+
+impl From<TypeAssignment> for SymbolClass {
+    fn from(v: TypeAssignment) -> Self {
+        match v {
+            TypeAssignment::ToplevelFunction(..) => SymbolClass::Builtin,
+            TypeAssignment::LocalName(..) => SymbolClass::Local,
+        }
+    }
+}
 
 pub trait PrefixFormatter {
     fn write_with_prefix(&self, f: &mut fmt::Formatter<'_>, prefix: &str) -> fmt::Result;
@@ -1831,14 +1870,13 @@ mod tests {
 
     use super::super::parse::parse_str;
     use super::*;
-    use super::super::builtin_scope;
 
     #[test]
     fn test_deduce_kinds() {
         let code = "data Toto a b = Mo (b a).";
         let mut module = parse_str(code).unwrap();
         module.generate_type_constructors();
-        let typed = module.deduce_types(&TypeScope::new()).unwrap();
+        let typed = module.deduce_types().unwrap();
         let kind_scope = typed.deduce_data_kinds().unwrap();
         let toto_kind = kind_scope.get("Toto").unwrap();
 
@@ -1859,7 +1897,7 @@ mod tests {
         let code = "data Foo a b = Bar (b a) | Baz b.";
         let mut module = parse_str(code).unwrap();
         module.generate_type_constructors();
-        let typed = module.deduce_types(&TypeScope::new()).unwrap();
+        let typed = module.deduce_types().unwrap();
         assert!(typed.check_kinds().is_err());
     }
 
@@ -1868,7 +1906,7 @@ mod tests {
         let code = "data Foo a b = Bar (b a) | Baz.";
         let mut module = parse_str(code).unwrap();
         module.generate_type_constructors();
-        let typed = module.deduce_types(&TypeScope::new()).unwrap();
+        let typed = module.deduce_types().unwrap();
         assert!(typed.check_kinds().is_ok());
     }
 
@@ -1887,17 +1925,23 @@ mod tests {
         ";
         let mut module = parse_str(code).unwrap();
         module.generate_type_constructors();
-        let builtin = builtin_scope::create_builtin_scope();
-        let typed = module.deduce_types(&builtin).unwrap();
+        let typed = module.deduce_types().unwrap();
         assert!(typed.check_kinds().is_ok());
         let main = typed.get_function("foo").unwrap();
 
-        let sol = Solution::new(vec![CompositeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B16)))], 0);
-        let mut scope = NameScope::new();
-        scope.add_toplevel("foo");
-        scope.add_toplevel("Bar");
-        scope.add_toplevel("Baz");
-        let instance = main.instantiate(&sol, &typed, &mut scope).unwrap();
+        let sol = Solution::new(
+            vec![CompositeExpression::Atomic(AtomicType::Int(IntType::new(
+                false,
+                IntBits::B16,
+            )))],
+            0,
+        );
+        let mut scope = TypeScope::new();
+        scope.set("__add__", &SymbolClass::Builtin).unwrap();
+        scope.set("foo", &SymbolClass::Global).unwrap();
+        scope.set("Bar", &SymbolClass::Global).unwrap();
+        scope.set("Baz", &SymbolClass::Global).unwrap();
+        let instance = main.instantiate(&sol, &typed, &scope).unwrap();
         panic!("{}", instance);
     }
 }

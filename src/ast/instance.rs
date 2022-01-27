@@ -6,6 +6,7 @@ use std::fmt::{self, Write};
 pub(super) enum MangledId {
     Local(String),
     Global(String, Vec<ConcreteType>),
+    Builtin(String, Vec<ConcreteType>),
     Auto(u64),
 }
 
@@ -21,6 +22,14 @@ impl fmt::Display for MangledId {
         match self {
             Local(s) => f.write_str(s),
             Global(s, ts) => {
+                f.write_str(s)?;
+                for t in ts.iter() {
+                    f.write_char('_')?;
+                    f.write_str(&t.as_short_string())?;
+                }
+                Ok(())
+            }
+            Builtin(s, ts) => {
                 f.write_str(s)?;
                 for t in ts.iter() {
                     f.write_char('_')?;

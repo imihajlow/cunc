@@ -126,7 +126,7 @@ impl fmt::Display for ConcreteType {
 #[cfg(test)]
 mod tests {
     use super::super::parse::parse_str;
-    use super::super::scope::TypeScope;
+    
     use super::super::type_info::{IntBits, IntType};
     use super::*;
 
@@ -142,7 +142,7 @@ mod tests {
         ";
         let mut module = parse_str(code).unwrap();
         module.generate_type_constructors();
-        let typed = module.deduce_types(&TypeScope::new()).unwrap();
+        let typed = module.deduce_types().unwrap();
         let y = typed.get_function("y").unwrap();
         let yt = &y.body.t;
         let concrete_yt = ConcreteType::new(&yt, &typed).unwrap();

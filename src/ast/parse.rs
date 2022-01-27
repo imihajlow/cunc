@@ -1,4 +1,5 @@
 use super::ast::*;
+use super::builtin_scope::BuiltinScope;
 use super::type_vars::TypeVars;
 use super::type_info::{AtomicType, TypeExpression};
 use crate::error::Error;
@@ -37,7 +38,7 @@ pub(super) fn parse_str(code: &str) -> Result<Module<OptionalType, String>, Erro
     };
     // println!("{}", &root);
 
-    let mut result: Module<OptionalType, String> = Module::new();
+    let mut result: Module<OptionalType, String> = Module::new(Some(BuiltinScope::new()));
     let mut tc_map: TcMap = HashMap::new();
     for node in root.into_iter() {
         match node.as_rule() {
