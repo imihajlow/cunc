@@ -2,7 +2,6 @@
 use super::builtin_scope::BuiltinScope;
 use super::concrete_type::ConcreteType;
 use super::instance::MangledId;
-use super::scope::NameScope;
 use super::scope::TypeScope;
 use super::type_assignment::TypeAssignment;
 use super::type_info::AtomicKind;
@@ -370,10 +369,8 @@ impl<Type> Module<Type, String> {
 
     /// Build a graph of dependencies between custom types
     fn build_types_top_order(&self) -> Result<Vec<SumType>, Error> {
-        let mut scope = NameScope::new();
         let mut type_by_name: HashMap<String, &SumType> = HashMap::new();
         for t in self.types.iter() {
-            scope.add_toplevel(&t.name);
             type_by_name.insert(t.name.to_owned(), t);
         }
         let mut dep_graph: ObjectGraph<String> = ObjectGraph::new();
@@ -1640,10 +1637,6 @@ impl Module<TypeExpression, String> {
         &self,
         entry: (&str, &TypeExpression),
     ) -> Result<Vec<(String, Solution<AtomicType>)>, Error> {
-        let mut scope = NameScope::new();
-        for f in self.functions.iter() {
-            scope.add_toplevel(&f.name);
-        }
 
         // let mut bfs_queue: VecDeque<(&str, &)>
         // let mut refs: Vec<(String, TypeExpression, Position)> = Vec::new();
