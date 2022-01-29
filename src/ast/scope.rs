@@ -61,4 +61,25 @@ impl<'a, T: Clone> TypeScope<'a, T> {
             }
         }
     }
+
+    pub fn as_iter(&'a self) -> Box<dyn Iterator<Item = (&'a String, &'a T)> + 'a> {
+        match self.parent {
+            Some(p) => Box::new(p.as_iter().chain(self.bindings.iter())),
+            None => Box::new(self.bindings.iter())
+        }
+    }
+}
+
+impl<'a, T: Clone + PartialEq> TypeScope<'a, T> {
+    pub fn set_dup(&mut self, name: &str, val: &T) -> Result<(), ErrorCause> {
+        if self.bindings.contains_key(name) {
+            if &self.bindings[name] != val {
+                return Err(ErrorCause::Redefinition(name.to_string()));
+            } else {
+                return Ok(())
+            }
+        }
+        self.bindings.insert(name.to_string(), T::clone(val));
+        Ok(())
+    }
 }

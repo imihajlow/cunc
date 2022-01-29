@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unstable_name_collisions)]
+#![deny(unused_must_use)]
 use argparse::ArgumentParser;
 
 use argparse::Store;

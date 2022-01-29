@@ -1,10 +1,7 @@
-use itertools::Itertools;
-
 use crate::position::Position;
 use crate::ast::type_info::AtomicTypeParseError;
 use crate::ast::type_info::KindExpression;
 use crate::ast::type_info::TypeExpression;
-use crate::util::var_from_number;
 use std::fmt;
 
 #[derive(Debug)]

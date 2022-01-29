@@ -10,6 +10,7 @@ mod concrete_type;
 mod instance;
 mod type_vars;
 mod type_assignment;
+mod function_header;
 
 use type_info::TypeExpression;
 use crate::error::Error;

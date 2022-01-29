@@ -1,4 +1,3 @@
-use std::fmt::Write;
 use std::fmt;
 use crate::ast::ExpressionVariant;
 use crate::ast::type_info::TypeExpression;
@@ -225,7 +224,6 @@ impl fmt::Display for Cexp {
 
 #[cfg(test)]
 mod tests {
-    use crate::ast::parse_and_deduce;
     use super::*;
 
     #[test]

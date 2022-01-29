@@ -1,10 +1,9 @@
-use std::fmt::Formatter;
-use std::fmt::Write;
 use std::fmt;
+use std::fmt::Formatter;
 
 use crate::error::ErrorCause;
 
-use super::ast::{Module};
+use super::ast::Module;
 use super::type_info::{AtomicType, CompositeExpression, IntType, TypeExpression};
 use itertools::Itertools;
 
@@ -83,12 +82,13 @@ impl ConcreteType {
         match self {
             Int(t) => t.as_short_string(),
             Tuple(v) => {
-                format!("T{}", v.len()) +
-                &v.iter().map(|t| t.as_short_string()).collect::<String>()
+                format!("T{}", v.len()) + &v.iter().map(|t| t.as_short_string()).collect::<String>()
             }
             Enum(v) => {
-                format!("E{}_", v.len()) +
-                &v.iter().map(|(i,t)| format!("{i}") + &t.as_short_string()).collect::<String>()
+                format!("E{}_", v.len())
+                    + &v.iter()
+                        .map(|(i, t)| format!("{i}") + &t.as_short_string())
+                        .collect::<String>()
             }
             Function(a, b) => {
                 format!("F{}{}", a.as_short_string(), b.as_short_string())
@@ -104,14 +104,22 @@ impl fmt::Display for ConcreteType {
             Int(t) => write!(f, "{t}"),
             Tuple(v) => {
                 f.write_str("(")?;
-                for s in v.iter().map(|t| format!("{t}")).intersperse(", ".to_string()) {
+                for s in v
+                    .iter()
+                    .map(|t| format!("{t}"))
+                    .intersperse(", ".to_string())
+                {
                     f.write_str(&s)?;
                 }
                 f.write_str(")")
             }
             Enum(v) => {
                 f.write_str("(")?;
-                for s in v.iter().map(|(i,t)| format!("{i}:{t}")).intersperse(" | ".to_string()) {
+                for s in v
+                    .iter()
+                    .map(|(i, t)| format!("{i}:{t}"))
+                    .intersperse(" | ".to_string())
+                {
                     f.write_str(&s)?;
                 }
                 f.write_str(")")
@@ -126,7 +134,7 @@ impl fmt::Display for ConcreteType {
 #[cfg(test)]
 mod tests {
     use super::super::parse::parse_str;
-    
+
     use super::super::type_info::{IntBits, IntType};
     use super::*;
 

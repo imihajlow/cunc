@@ -1,6 +1,6 @@
-
 use super::builtin_scope::BuiltinScope;
 use super::concrete_type::ConcreteType;
+use super::function_header::FunctionHeader;
 use super::instance::MangledId;
 use super::scope::TypeScope;
 use super::type_assignment::TypeAssignment;
@@ -92,10 +92,8 @@ pub struct Binding<Type, Id> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function<Type, Id> {
-    name: Id,
-    context: ConstraintContext<Type>,
+    header: FunctionHeader<Type, Id>,
     pub(super) body: Expression<Type, Id>,
-    type_vars: TypeVars,
     p: Position,
 }
 
@@ -185,7 +183,7 @@ impl<Type, Id: PartialEq> Module<Type, Id> {
 impl<Type> Module<Type, String> {
     pub(super) fn get_function<'a>(&'a self, name: &str) -> Option<&'a Function<Type, String>> {
         for f in self.functions.iter() {
-            if f.name == name {
+            if f.header.name == name {
                 return Some(f);
             }
         }
@@ -264,14 +262,13 @@ impl TypeConstructor {
             self.p.to_owned(),
             Some(self.parent_type.to_owned()),
         );
-        Function::<OptionalType, String>::new_curry(
+        let header = FunctionHeader::new(
             self.name.to_owned(),
+            OptionalType(Some(self.parent_type.to_owned())),
             ConstraintContext::new(),
-            bindings,
-            body,
             self.type_vars.to_owned(),
-            self.p.to_owned(),
-        )
+        );
+        Function::<OptionalType, String>::new_curry(header, bindings, body, self.p.to_owned())
     }
 
     fn as_tuple(
@@ -349,7 +346,9 @@ impl<Type> Module<Type, String> {
             }
         }
         for function in self.functions.iter() {
-            scope.set(&function.name, &SymbolClass::Global).map_err(|c| Error::new(c, function.p.to_owned()));
+            scope
+                .set(&function.header.name, &SymbolClass::Global)
+                .map_err(|c| Error::new(c, function.p.to_owned()))?;
         }
         let mut result: ObjectGraph<String> = ObjectGraph::new();
         for function in self.functions.iter() {
@@ -358,10 +357,10 @@ impl<Type> Module<Type, String> {
                 refs.insert(n.to_owned());
                 ()
             };
-            function.body.collect_refs(&scope, &mut add_ref);
-            result.add_node_unique(&function.name);
+            function.body.collect_refs(&scope, &mut add_ref)?;
+            result.add_node_unique(&function.header.name);
             for name in refs.into_iter() {
-                result.add_edge_unique(&function.name, &name);
+                result.add_edge_unique(&function.header.name, &name);
             }
         }
         Ok(result)
@@ -409,8 +408,11 @@ impl Module<OptionalType, String> {
     }
 
     pub(super) fn deduce_types(&self) -> Result<Module<TypeExpression, String>, Error> {
-        let function_by_name: HashMap<String, &Function<_, _>> =
-            HashMap::from_iter(self.functions.iter().map(|f| (f.name.to_string(), f)));
+        let function_by_name: HashMap<String, &Function<_, _>> = HashMap::from_iter(
+            self.functions
+                .iter()
+                .map(|f| (f.header.name.to_string(), f)),
+        );
         let dep_graph = self.build_dependency_graph()?;
         let toporder = dep_graph
             .find_strongly_connected()
@@ -451,11 +453,11 @@ impl Module<OptionalType, String> {
                 // println!("\n{} {}", &name, &deduced_body);
                 scope
                     .set(
-                        &deduced_fn.name,
+                        &deduced_fn.header.name,
                         &TypeAssignment::ToplevelFunction(
-                            TypeVars::clone(&deduced_fn.type_vars),
+                            TypeVars::clone(&deduced_fn.header.type_vars),
                             TypeExpression::clone(&deduced_fn.body.t),
-                            ConstraintContext::clone(&deduced_fn.context),
+                            ConstraintContext::clone(&deduced_fn.header.constraints),
                         ),
                     )
                     .map_err(|c| Error::new(c, Position::clone(&deduced_fn.p)))?;
@@ -497,7 +499,6 @@ impl Module<TypeExpression, String> {
                 .unwrap();
             // Assuming any remaining free var correspond to types.
             kind.substitute_free_vars(&KindExpression::Atomic(AtomicKind::Type));
-            println!("{} :: {}", &t.name, &kind);
             scope.set(&t.name, &kind).map_err(|c| Error::new(c, t.p))?;
         }
         Ok(scope)
@@ -523,39 +524,42 @@ impl<Type> Expression<Type, String> {
         &self,
         scope: &TypeScope<SymbolClass>,
         f: &mut dyn FnMut(&str, &Type, &Position) -> (),
-    ) {
+    ) -> Result<(), Error> {
         use ExpressionVariant::*;
         match &self.e {
             Application(a, b) => {
-                a.collect_refs(scope, f);
-                b.collect_refs(scope, f);
+                a.collect_refs(scope, f)?;
+                b.collect_refs(scope, f)
             }
-            IntConstant(_) => (),
+            IntConstant(_) => Ok(()),
             Variable(n) => {
                 let class = scope.get(n).unwrap();
                 if class == &SymbolClass::Global {
                     f(n, &self.t, &self.p);
                 }
+                Ok(())
             }
-            Abstraction(l) => {
-                l.collect_refs(scope, f);
-            }
+            Abstraction(l) => l.collect_refs(scope, f),
             Let(b, val, body) => {
-                val.collect_refs(scope, f);
+                val.collect_refs(scope, f)?;
                 let mut inner_scope = scope.push();
-                inner_scope.set(&b.name, &SymbolClass::Local);
-                body.collect_refs(&inner_scope, f);
+                inner_scope
+                    .set(&b.name, &SymbolClass::Local)
+                    .map_err(|c| Error::new(c, self.p.to_owned()))?;
+                body.collect_refs(&inner_scope, f)
             }
             Pmatch(e, v) => {
-                e.collect_refs(scope, f);
+                e.collect_refs(scope, f)?;
                 for c in v.iter() {
-                    c.collect_refs(scope, f);
+                    c.collect_refs(scope, f)?;
                 }
+                Ok(())
             }
             Record(v) => {
                 for e in v.iter() {
-                    e.collect_refs(scope, f);
+                    e.collect_refs(scope, f)?;
                 }
+                Ok(())
             }
             Offset(_, _) => unreachable!(),
             Switch(_, _) => unreachable!(),
@@ -568,12 +572,14 @@ impl<Type> Case<Type, String> {
         &self,
         scope: &TypeScope<SymbolClass>,
         f: &mut dyn FnMut(&str, &Type, &Position) -> (),
-    ) {
+    ) -> Result<(), Error> {
         let mut inner_scope = scope.push();
         for b in self.params.iter() {
-            inner_scope.set(&b.name, &SymbolClass::Local);
+            inner_scope
+                .set(&b.name, &SymbolClass::Local)
+                .map_err(|c| Error::new(c, self.p.to_owned()))?;
         }
-        self.body.collect_refs(&inner_scope, f);
+        self.body.collect_refs(&inner_scope, f)
     }
 }
 
@@ -582,9 +588,11 @@ impl<Type> Lambda<Type, String> {
         &self,
         scope: &TypeScope<SymbolClass>,
         f: &mut dyn FnMut(&str, &Type, &Position) -> (),
-    ) {
+    ) -> Result<(), Error> {
         let mut inner_scope = scope.push();
-        inner_scope.set(&self.param.name, &SymbolClass::Local);
+        inner_scope
+            .set(&self.param.name, &SymbolClass::Local)
+            .map_err(|c| Error::new(c, self.p.to_owned()))?;
         self.tail.collect_refs(&inner_scope, f)
     }
 }
@@ -859,11 +867,14 @@ impl Function<OptionalType, String> {
         solver: &mut Solver<AtomicType>,
         allocator: &mut TypeVarAllocator,
     ) -> Result<Function<VariableType, String>, Error> {
-        let my_index = scope.get(&self.name).unwrap().unwrap_local_name();
+        let my_index = scope.get(&self.header.name).unwrap().unwrap_local_name();
         let function_scope = scope.push();
         // TODO type_vars.get_vars_count must take context into account
-        allocator.enter_function(self.type_vars.get_vars_count(), &self.p);
-        let mut constraint_context = self.context.assign_type_vars(solver, allocator)?;
+        allocator.enter_function(self.header.type_vars.get_vars_count(), &self.p);
+        let mut constraint_context = self
+            .header
+            .constraints
+            .assign_type_vars(solver, allocator)?;
         let body = self.body.assign_type_vars(
             &function_scope,
             solver,
@@ -872,13 +883,13 @@ impl Function<OptionalType, String> {
         )?;
         solver.add_rule(my_index, TypeExpression::Var(body.t.0));
         allocator.leave_function();
-        Ok(Function::new(
-            self.name.to_owned(),
+        let header = FunctionHeader::new(
+            self.header.name.to_owned(),
+            VariableType(my_index),
             constraint_context,
-            body,
             TypeVars::new(0),
-            Position::clone(&self.p),
-        ))
+        );
+        Ok(Function::new(header, body, self.p.to_owned()))
     }
 }
 
@@ -905,13 +916,28 @@ impl Function<VariableType, String> {
         self,
         solution: &Solution<AtomicType>,
     ) -> Result<Function<TypeExpression, String>, Error> {
-        let new_constraint_context = self.context.translate_types(solution).check_and_reduce()?;
         Ok(Function {
-            name: self.name,
+            header: self.header.apply_solution(solution)?,
             body: self.body.translate_types(solution),
-            context: new_constraint_context,
-            type_vars: TypeVars::new(solution.get_free_vars_count()),
             p: self.p,
+        })
+    }
+}
+
+impl FunctionHeader<VariableType, String> {
+    fn apply_solution(
+        self,
+        solution: &Solution<AtomicType>,
+    ) -> Result<FunctionHeader<TypeExpression, String>, Error> {
+        let new_constraint_context = self
+            .constraints
+            .translate_types(solution)
+            .check_and_reduce()?;
+        Ok(FunctionHeader {
+            name: self.name,
+            t: solution.translate_var_index(self.t.0),
+            constraints: new_constraint_context,
+            type_vars: TypeVars::new(solution.get_free_vars_count()),
         })
     }
 }
@@ -1155,14 +1181,15 @@ impl Function<TypeExpression, String> {
         solver: &mut Solver<AtomicKind>,
     ) -> Result<(), Error> {
         let function_scope = scope.push();
-        tva.enter_function(self.type_vars.get_vars_count(), &self.p);
+        tva.enter_function(self.header.type_vars.get_vars_count(), &self.p);
         let body_index = self
             .body
             .t
             .create_kind_rules(tva, &function_scope, solver)
             .map_err(|c| Error::new(c, self.p.to_owned()))?;
         solver.add_rule(body_index, KindExpression::TYPE);
-        self.context
+        self.header
+            .constraints
             .create_kind_rules(tva, &function_scope, solver)?;
         self.body.create_kind_rules(tva, &function_scope, solver)?;
         tva.leave_function();
@@ -1242,29 +1269,19 @@ impl<Type, Id> Expression<Type, Id> {
 
 impl<Type, Id> Function<Type, Id> {
     pub(super) fn new(
-        name: Id,
-        context: ConstraintContext<Type>,
+        header: FunctionHeader<Type, Id>,
         body: Expression<Type, Id>,
-        type_vars: TypeVars,
         p: Position,
     ) -> Self {
-        Self {
-            name,
-            context,
-            body,
-            type_vars,
-            p,
-        }
+        Self { header, body, p }
     }
 }
 
 impl Function<OptionalType, String> {
     fn new_curry(
-        name: String,
-        context: ConstraintContext<OptionalType>,
+        header: FunctionHeader<OptionalType, String>,
         params: Vec<Binding<OptionalType, String>>,
         body: Expression<OptionalType, String>,
-        type_vars: TypeVars,
         p: Position,
     ) -> Self {
         let mut tail = body;
@@ -1282,10 +1299,8 @@ impl Function<OptionalType, String> {
             )
         }
         Self {
-            name,
-            context,
+            header,
             body: tail,
-            type_vars,
             p,
         }
     }
@@ -1337,7 +1352,7 @@ where
     Type: PartialEq,
 {
     pub(super) fn add_unique(&mut self, t: Type, p: &Position) {
-        if self.c.iter().find(|(c, p)| c == &t).is_none() {
+        if self.c.iter().find(|(c, _)| c == &t).is_none() {
             self.c.push((t, Position::clone(p)));
         }
     }
@@ -1374,16 +1389,32 @@ impl Expression<TypeExpression, String> {
         use ExpressionVariant::*;
         let ev: ExpressionVariant<ConcreteType, MangledId> = match &self.e {
             IntConstant(n) => IntConstant(*n),
-            Variable(name) => match scope.get(&name).unwrap() {
-                SymbolClass::Global => Variable(
-                    m.get_function(&name)
-                        .unwrap()
-                        .get_mangled_instance_id(&translated_type, m)
-                        .map_err(|c| Error::new(c, self.p.to_owned()))?,
-                ),
-                SymbolClass::Local => Variable(MangledId::Local(name.to_owned())),
-                SymbolClass::Builtin => todo!(),
-            },
+            Variable(name) => {
+                let id = match scope.get(&name).unwrap() {
+                    SymbolClass::Global => {
+                        m.get_function(&name)
+                            .unwrap()
+                            .header
+                            .instantiate(&translated_type, m)
+                            .map_err(|c| Error::new(c, self.p.to_owned()))?
+                            .0
+                            .name
+                    }
+                    SymbolClass::Local => MangledId::Local(name.to_owned()),
+                    SymbolClass::Builtin => {
+                        m.builtin_scope
+                            .as_ref()
+                            .unwrap()
+                            .get_function(&name)
+                            .unwrap()
+                            .instantiate(&translated_type, m)
+                            .map_err(|c| Error::new(c, self.p.to_owned()))?
+                            .0
+                            .name
+                    }
+                };
+                Variable(id)
+            }
             Application(a, b) => Application(
                 Box::new(a.instantiate(sol, m, scope)?),
                 Box::new(b.instantiate(sol, m, scope)?),
@@ -1569,46 +1600,61 @@ impl Lambda<TypeExpression, String> {
     }
 }
 
-impl Function<TypeExpression, String> {
+impl FunctionHeader<TypeExpression, String> {
     /// Assign generic type variables to specific values given defined type of this function.
-    fn get_mangled_instance_id(
+    fn instantiate(
         &self,
         t: &TypeExpression,
         m: &Module<TypeExpression, String>,
-    ) -> Result<MangledId, ErrorCause> {
+    ) -> Result<
+        (
+            FunctionHeader<ConcreteType, MangledId>,
+            Solution<AtomicType>,
+        ),
+        ErrorCause,
+    > {
         let mut solver: Solver<AtomicType> = Solver::new();
         solver.announce_vars(&self.type_vars);
         let index = self.type_vars.get_vars_count();
         solver.add_rule(index, t.to_owned());
-        solver.add_rule(index, self.body.t.to_owned());
+        solver.add_rule(index, self.t.to_owned());
         let solution = solver.solve().map_err(|e| e.into_error_cause())?;
         if solution.get_free_vars_count() != 0 {
             return Err(ErrorCause::UnresolvedGenericVars);
         }
-        Ok(MangledId::Global(
+        let id = MangledId::Global(
             self.name.to_owned(),
             self.type_vars.instantiate(m, &solution)?,
+        );
+        let translated_type = solution.translate_type(self.t.to_owned());
+        Ok((
+            FunctionHeader {
+                name: id,
+                t: ConcreteType::new(&translated_type, m)?,
+                constraints: ConstraintContext::new(),
+                type_vars: TypeVars::new(0),
+            },
+            solution,
         ))
     }
+}
 
+impl Function<TypeExpression, String> {
     fn instantiate(
         &self,
-        sol: &Solution<AtomicType>,
+        t: &TypeExpression,
         m: &Module<TypeExpression, String>,
         scope: &TypeScope<SymbolClass>,
     ) -> Result<Function<ConcreteType, MangledId>, Error> {
-        let generic_params = self
-            .type_vars
-            .instantiate(m, sol)
+        let (header, sol) = self
+            .header
+            .instantiate(t, m)
             .map_err(|c| Error::new(c, Position::Unknown))?;
-        let id = MangledId::Global(self.name.to_owned(), generic_params);
-        let body = self.body.instantiate(sol, m, scope)?;
+        let body = self.body.instantiate(&sol, m, scope)?;
         Ok(Function {
-            name: id,
+            header,
             body,
             p: self.p.to_owned(),
-            context: ConstraintContext::new(),
-            type_vars: TypeVars::new(0),
         })
     }
 }
@@ -1617,18 +1663,31 @@ impl Module<TypeExpression, String> {
     fn instantiate(
         &self,
         entry: (&str, &TypeExpression),
-        builtin_scope: &TypeScope<SymbolClass>,
     ) -> Result<Module<ConcreteType, MangledId>, Error> {
         let mut result: Module<ConcreteType, MangledId> = Module::new(None);
         let instances = self.collect_instance_refs(entry)?;
-        let mut scope = builtin_scope.push();
-        for (n, _) in instances.iter() {
-            scope.set(n, &SymbolClass::Global);
+        let mut scope = TypeScope::new();
+        for (n, c, _) in instances.iter() {
+            scope.set_dup(n, c).unwrap();
         }
-        for (n, sol) in instances.into_iter() {
-            let fun = self.get_function(&n).unwrap();
-            let instance = fun.instantiate(&sol, self, &mut scope)?;
-            result.push_function(instance);
+        for (n, c, t) in instances.into_iter() {
+            match c {
+                SymbolClass::Global => {
+                    let fun = self.get_function(&n).unwrap();
+                    let instance = fun.instantiate(&t, self, &scope)?;
+                    result.push_function(instance);
+                }
+                SymbolClass::Builtin => {
+                    let fun = self
+                        .builtin_scope
+                        .as_ref()
+                        .unwrap()
+                        .get_function(&n)
+                        .unwrap();
+                    todo!()
+                }
+                SymbolClass::Local => unreachable!(),
+            }
         }
         Ok(result)
     }
@@ -1636,8 +1695,7 @@ impl Module<TypeExpression, String> {
     fn collect_instance_refs(
         &self,
         entry: (&str, &TypeExpression),
-    ) -> Result<Vec<(String, Solution<AtomicType>)>, Error> {
-
+    ) -> Result<Vec<(String, SymbolClass, TypeExpression)>, Error> {
         // let mut bfs_queue: VecDeque<(&str, &)>
         // let mut refs: Vec<(String, TypeExpression, Position)> = Vec::new();
         // let mut add_mapping = |n: &str, t: &TypeExpression, p: &Position| {
@@ -1825,11 +1883,7 @@ impl<Type: PrefixFormatter, Id: fmt::Display> fmt::Display for Binding<Type, Id>
 
 impl<Type: PrefixFormatter, Id: fmt::Display> fmt::Display for Function<Type, Id> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[")?;
-        write!(f, "{}", self.context)?;
-        write!(f, "{}", self.type_vars)?;
-        self.body.t.write_with_prefix(f, "")?;
-        write!(f, "]\n{} = {}.", self.name, self.body)
+        write!(f, "{} = {}.", self.header, self.body)
     }
 }
 
@@ -1904,7 +1958,7 @@ mod tests {
     }
 
     #[test]
-    fn test_instantiate() {
+    fn test_instantiate_smoke() {
         let code = "
             data Foo a b = Bar a b | Baz.
 
@@ -1920,21 +1974,48 @@ mod tests {
         module.generate_type_constructors();
         let typed = module.deduce_types().unwrap();
         assert!(typed.check_kinds().is_ok());
-        let main = typed.get_function("foo").unwrap();
+        let main = typed.get_function("main").unwrap();
 
-        let sol = Solution::new(
-            vec![CompositeExpression::Atomic(AtomicType::Int(IntType::new(
-                false,
-                IntBits::B16,
-            )))],
-            0,
+        let t: TypeExpression = TypeExpression::new_function(
+            CompositeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B16))),
+            CompositeExpression::Atomic(AtomicType::Int(IntType::new(false, IntBits::B16))),
         );
         let mut scope = TypeScope::new();
         scope.set("__add__", &SymbolClass::Builtin).unwrap();
         scope.set("foo", &SymbolClass::Global).unwrap();
         scope.set("Bar", &SymbolClass::Global).unwrap();
         scope.set("Baz", &SymbolClass::Global).unwrap();
-        let instance = main.instantiate(&sol, &typed, &scope).unwrap();
-        panic!("{}", instance);
+        main.instantiate(&t, &typed, &scope).unwrap();
+    }
+
+    #[test]
+    fn test_instantiate_fn() {
+        let code = "
+            foo x = x.
+        ";
+        let mut module = parse_str(code).unwrap();
+        module.generate_type_constructors();
+        let typed = module.deduce_types().unwrap();
+        assert!(typed.check_kinds().is_ok());
+        let foo = typed.get_function("foo").unwrap();
+
+        let tu16 = IntType::new(false, IntBits::B16);
+        let t: TypeExpression = TypeExpression::new_function(
+            CompositeExpression::Atomic(AtomicType::Int(tu16.to_owned())),
+            CompositeExpression::Atomic(AtomicType::Int(tu16.to_owned())),
+        );
+        let scope = TypeScope::new();
+        let instance = foo.instantiate(&t, &typed, &scope).unwrap();
+        assert_eq!(
+            instance.header.name,
+            MangledId::Global("foo".to_string(), vec![ConcreteType::Int(tu16.to_owned())])
+        );
+        assert_eq!(
+            instance.header.t,
+            ConcreteType::Function(
+                Box::new(ConcreteType::Int(tu16.to_owned())),
+                Box::new(ConcreteType::Int(tu16.to_owned()))
+            )
+        );
     }
 }

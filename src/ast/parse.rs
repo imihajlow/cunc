@@ -1,5 +1,6 @@
 use super::ast::*;
 use super::builtin_scope::BuiltinScope;
+use super::function_header::FunctionHeader;
 use super::type_vars::TypeVars;
 use super::type_info::{AtomicType, TypeExpression};
 use crate::error::Error;
@@ -132,11 +133,11 @@ fn parse_function(pair: Pair<Rule>, tc_map: &TcMap) -> Result<Function<OptionalT
     let body_pair = inner.next().unwrap();
     let body_expr = parse_expression(body_pair, &mut tva, tc_map)?;
     let body = curry(param_idents.into_inner(), fn_type, body_expr)?;
+    let header: FunctionHeader<OptionalType, String> = 
+    FunctionHeader::new(name.to_string(), OptionalType(None), context, tva.into_type_vars());
     Ok(Function::new(
-        name.to_string(),
-        context,
+        header,
         body,
-        tva.into_type_vars(),
         pos,
     ))
 }
