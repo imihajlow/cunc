@@ -1,18 +1,40 @@
 use std::fmt::Formatter;
-use super::concrete_type::ConcreteType;
+use super::{concrete_type::ConcreteType, ast::Function, function_header::FunctionHeader};
 use std::fmt::{self, Write};
 
 #[derive(Debug, Clone, PartialEq)]
-pub(super) enum MangledId {
+pub enum MangledId {
     Local(String),
     Global(String, Vec<ConcreteType>),
     Builtin(String, Vec<ConcreteType>),
     Auto(u64),
 }
 
+pub struct Instance {
+    functions: Vec<Function<ConcreteType, MangledId>>,
+    builtins: Vec<FunctionHeader<ConcreteType, MangledId>>,
+}
+
 impl MangledId {
     pub(super) fn new_auto() -> Self {
         Self::Auto(rand::random())
+    }
+}
+
+impl Instance {
+    pub(super) fn new() -> Self {
+        Self {
+            functions: Vec::new(),
+            builtins: Vec::new(),
+        }
+    }
+
+    pub(super) fn push_function(&mut self, fun: Function<ConcreteType, MangledId>) {
+        self.functions.push(fun);
+    }
+
+    pub(super) fn push_builtin(&mut self, fun: FunctionHeader<ConcreteType, MangledId>) {
+        self.builtins.push(fun);
     }
 }
 
@@ -39,5 +61,56 @@ impl fmt::Display for MangledId {
             }
             Auto(n) => write!(f, "auto_{n:016X}"),
         }
+    }
+}
+
+impl fmt::Display for Instance {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), fmt::Error> {
+        write!(f, "instance:")?;
+        for bi in self.builtins.iter() {
+            write!(f, "\t{}", bi.name)?;
+        }
+        for fun in self.functions.iter() {
+            write!(f, "\t{}", fun)?;
+        }
+        Ok(())
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use crate::ast::type_info::IntType;
+    use crate::ast::type_info::IntBits;
+    use crate::ast::type_info::AtomicType;
+    use crate::ast::type_info::CompositeExpression;
+    use crate::ast::TypeExpression;
+    use crate::ast::parse::parse_str;
+    use super::*;
+
+    #[test]
+    fn test_instantiate_mod() {
+        let code = "
+            data Foo a b = Bar a b | Baz.
+
+            foo x = match x {
+                Bar y z => y + z,
+                Baz => 0,
+            }.
+
+            [U16 -> U16]
+            main x = foo (Bar x x).
+        ";
+        let mut module = parse_str(code).unwrap();
+        module.generate_type_constructors();
+        let typed = module.deduce_types().unwrap();
+        assert!(typed.check_kinds().is_ok());
+        let tu16 = IntType::new(false, IntBits::B16);
+        let main_type: TypeExpression = TypeExpression::new_function(
+            CompositeExpression::Atomic(AtomicType::Int(tu16.to_owned())),
+            CompositeExpression::Atomic(AtomicType::Int(tu16.to_owned())),
+        );
+        let inst = typed.instantiate(("main", &main_type)).unwrap();
+        panic!("{}", inst);
     }
 }

@@ -1,6 +1,7 @@
 use super::builtin_scope::BuiltinScope;
 use super::concrete_type::ConcreteType;
 use super::function_header::FunctionHeader;
+use super::instance::Instance;
 use super::instance::MangledId;
 use super::scope::TypeScope;
 use super::type_assignment::TypeAssignment;
@@ -23,6 +24,7 @@ use itertools::Itertools;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::iter;
 
@@ -129,7 +131,7 @@ pub struct SumType {
     p: Position,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum SymbolClass {
     Builtin,
     Global,
@@ -188,6 +190,12 @@ impl<Type> Module<Type, String> {
             }
         }
         None
+    }
+
+    fn get_builtin<'a>(&'a self, name: &str) -> Option<&'a FunctionHeader<TypeExpression, String>> {
+        self.builtin_scope
+            .as_ref()
+            .and_then(|scope| scope.get_function(name))
     }
 }
 
@@ -1390,7 +1398,10 @@ impl Expression<TypeExpression, String> {
         let ev: ExpressionVariant<ConcreteType, MangledId> = match &self.e {
             IntConstant(n) => IntConstant(*n),
             Variable(name) => {
-                let id = match scope.get(&name).unwrap() {
+                let id = match scope
+                    .get(&name)
+                    .expect(&format!("scope doesn't contain {name}"))
+                {
                     SymbolClass::Global => {
                         m.get_function(&name)
                             .unwrap()
@@ -1404,9 +1415,9 @@ impl Expression<TypeExpression, String> {
                     SymbolClass::Builtin => {
                         m.builtin_scope
                             .as_ref()
-                            .unwrap()
+                            .expect("no builtin scope")
                             .get_function(&name)
-                            .unwrap()
+                            .expect(&format!("builtins do not contain {name}"))
                             .instantiate(&translated_type, m)
                             .map_err(|c| Error::new(c, self.p.to_owned()))?
                             .0
@@ -1482,6 +1493,7 @@ fn pmatch_to_switch(
     let switch_var = MangledId::new_auto();
 
     let inner_expr = if has_enum_index {
+        // enum index is at offset zero and is a byte
         let switch_val_offset: Expression<ConcreteType, MangledId> = Expression {
             e: ExpressionVariant::Offset(
                 Box::new(Expression::new_var(
@@ -1530,7 +1542,13 @@ impl Case<TypeExpression, String> {
         scope: &TypeScope<SymbolClass>,
     ) -> Result<Expression<ConcreteType, MangledId>, Error> {
         let mut offset: usize = if has_enum_offset { 1 } else { 0 };
-        let mut body = self.body.instantiate(sol, m, scope)?;
+        let mut inner_scope = scope.push();
+        for binding in self.params.iter() {
+            inner_scope
+                .set(&binding.name, &SymbolClass::Local)
+                .map_err(|c| Error::new(c, binding.p.to_owned()))?;
+        }
+        let mut body = self.body.instantiate(sol, m, &inner_scope)?;
         let ret_type = body.t.to_owned();
         for binding in self.params.iter() {
             let instantiated_binding = binding.instantiate(sol, m)?;
@@ -1660,11 +1678,8 @@ impl Function<TypeExpression, String> {
 }
 
 impl Module<TypeExpression, String> {
-    fn instantiate(
-        &self,
-        entry: (&str, &TypeExpression),
-    ) -> Result<Module<ConcreteType, MangledId>, Error> {
-        let mut result: Module<ConcreteType, MangledId> = Module::new(None);
+    pub fn instantiate(&self, entry: (&str, &TypeExpression)) -> Result<Instance, Error> {
+        let mut result = Instance::new();
         let instances = self.collect_instance_refs(entry)?;
         let mut scope = TypeScope::new();
         for (n, c, _) in instances.iter() {
@@ -1684,7 +1699,11 @@ impl Module<TypeExpression, String> {
                         .unwrap()
                         .get_function(&n)
                         .unwrap();
-                    todo!()
+                    let instance = fun
+                        .instantiate(&t, self)
+                        .map_err(|c| Error::new(c, Position::Unknown))?
+                        .0;
+                    result.push_builtin(instance);
                 }
                 SymbolClass::Local => unreachable!(),
             }
@@ -1696,16 +1715,55 @@ impl Module<TypeExpression, String> {
         &self,
         entry: (&str, &TypeExpression),
     ) -> Result<Vec<(String, SymbolClass, TypeExpression)>, Error> {
-        // let mut bfs_queue: VecDeque<(&str, &)>
-        // let mut refs: Vec<(String, TypeExpression, Position)> = Vec::new();
-        // let mut add_mapping = |n: &str, t: &TypeExpression, p: &Position| {
-        //     refs.push((n.to_owned(), t.to_owned(), p.to_owned()))
-        // };
-        // self.body.collect_refs(scope, &mut add_mapping);
-        // refs.into_iter().map(|(n, t, p)| {
-        //     ConcreteType::new(&t, self)
-        // });
-        todo!()
+        let mut processed: HashSet<(String, TypeExpression)> = HashSet::new();
+        let mut bfs_queue: VecDeque<(String, TypeExpression)> = VecDeque::new();
+        let mut result: Vec<(String, SymbolClass, TypeExpression)> = Vec::new();
+
+        bfs_queue.push_back((entry.0.to_owned(), entry.1.to_owned()));
+
+        let mut global_scope = TypeScope::new();
+
+        for fun in self.functions.iter() {
+            global_scope
+                .set(&fun.header.name, &SymbolClass::Global)
+                .unwrap();
+        }
+
+        if let Some(builtins) = &self.builtin_scope {
+            for name in builtins.name_iter() {
+                // builtins are marked as globals to let collect_refs collect them
+                global_scope.set(name, &SymbolClass::Global).unwrap();
+            }
+        }
+
+        while let Some((name, t)) = bfs_queue.pop_front() {
+            if processed.contains(&(name.to_owned(), t.to_owned())) {
+                continue;
+            }
+            if let Some(fun) = self.get_function(&name) {
+                let mut solver = Solver::new();
+                let index = fun.header.type_vars.get_vars_count();
+                solver.add_rule(index, t.to_owned());
+                solver.add_rule(index, fun.header.t.to_owned());
+                let solution = solver.solve().unwrap();
+                fun.body
+                    .collect_refs(&global_scope, &mut |ref_name, ref_type, _ref_pos| {
+                        let ref_type_inst = solution.translate_type(ref_type.to_owned());
+                        let entry = (ref_name.to_string(), ref_type_inst);
+                        if !processed.contains(&entry) {
+                            println!("insert {} {}", entry.0, entry.1);
+                            bfs_queue.push_back(entry);
+                        }
+                    })?;
+                result.push((name.to_owned(), SymbolClass::Global, t.to_owned()));
+            } else if self.get_builtin(&name).is_some() {
+                result.push((name.to_owned(), SymbolClass::Builtin, t.to_owned()));
+            } else {
+                unreachable!() // names are already checked before
+            }
+            processed.insert((name, t));
+        }
+        Ok(result)
     }
 }
 // end instantiation
@@ -2017,5 +2075,72 @@ mod tests {
                 Box::new(ConcreteType::Int(tu16.to_owned()))
             )
         );
+    }
+
+    #[test]
+    fn test_collect_instance_refs() {
+        let code = "
+            data Foo a b = Bar a b | Baz.
+
+            foo x = match x {
+                Bar y z => y + z,
+                Baz => 0,
+            }.
+
+            [U16 -> U16]
+            main x = foo (Bar x x).
+        ";
+        let mut module = parse_str(code).unwrap();
+        module.generate_type_constructors();
+        let typed = module.deduce_types().unwrap();
+        assert!(typed.check_kinds().is_ok());
+
+        let tu16 = IntType::new(false, IntBits::B16);
+        let main_type: TypeExpression = TypeExpression::new_function(
+            CompositeExpression::Atomic(AtomicType::Int(tu16.to_owned())),
+            CompositeExpression::Atomic(AtomicType::Int(tu16.to_owned())),
+        );
+        let data_foo_type: TypeExpression = CompositeExpression::Composite(
+            Box::new(CompositeExpression::Composite(
+                Box::new(CompositeExpression::Atomic(AtomicType::User(
+                    "Foo".to_owned(),
+                ))),
+                Box::new(CompositeExpression::Atomic(AtomicType::Int(
+                    tu16.to_owned(),
+                ))),
+            )),
+            Box::new(CompositeExpression::Atomic(AtomicType::Int(
+                tu16.to_owned(),
+            ))),
+        );
+        let bar_type: TypeExpression = TypeExpression::new_function_from_vec(vec![
+            CompositeExpression::Atomic(AtomicType::Int(tu16.to_owned())),
+            CompositeExpression::Atomic(AtomicType::Int(tu16.to_owned())),
+            data_foo_type.to_owned(),
+        ]);
+        let foo_type = TypeExpression::new_function(
+            data_foo_type.to_owned(),
+            CompositeExpression::Atomic(AtomicType::Int(tu16.to_owned())),
+        );
+        let add_type = TypeExpression::new_function_from_vec(vec![
+            CompositeExpression::Atomic(AtomicType::Int(tu16.to_owned())),
+            CompositeExpression::Atomic(AtomicType::Int(tu16.to_owned())),
+            CompositeExpression::Atomic(AtomicType::Int(tu16.to_owned())),
+        ]);
+
+        let inst_refs = typed.collect_instance_refs(("main", &main_type)).unwrap();
+        assert_eq!(inst_refs.len(), 4);
+        assert!(inst_refs.contains(&(
+            "main".to_string(),
+            SymbolClass::Global,
+            main_type
+        )));
+        assert!(inst_refs.contains(&("Bar".to_string(), SymbolClass::Global, bar_type)));
+        assert!(inst_refs.contains(&("foo".to_string(), SymbolClass::Global, foo_type)));
+        assert!(inst_refs.contains(&(
+            "__add__".to_string(),
+            SymbolClass::Builtin,
+            add_type
+        )));
     }
 }

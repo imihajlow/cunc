@@ -49,27 +49,27 @@ pub type TypeExpression = CompositeExpression<AtomicType>;
 
 pub type KindExpression = CompositeExpression<AtomicKind>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CompositeExpression<AT> {
     Atomic(AT),
     Var(usize),
     Composite(Box<Self>, Box<Self>),
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum IntBits {
     B8 = 1,
     B16 = 2,
     B32 = 4,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct IntType {
     signed: bool,
     bits: IntBits,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AtomicType {
     Int(IntType),
     Function,
