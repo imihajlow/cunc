@@ -1,5 +1,5 @@
 pub(super) struct VarAllocator {
-    index: usize,
+    index: u64,
 }
 
 impl VarAllocator {
@@ -7,7 +7,7 @@ impl VarAllocator {
         Self { index: 0 }
     }
 
-    pub(super) fn alloc(&mut self) -> usize {
+    pub(super) fn alloc(&mut self) -> u64 {
         let r = self.index;
         self.index += 1;
         r

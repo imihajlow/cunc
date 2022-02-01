@@ -16,7 +16,7 @@ pub struct Instance {
 }
 
 impl MangledId {
-    pub(super) fn new_auto() -> Self {
+    pub fn new_auto() -> Self {
         Self::Auto(rand::random())
     }
 }

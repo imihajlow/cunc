@@ -77,6 +77,13 @@ impl ConcreteType {
         }
     }
 
+    pub fn try_into_int_type(self) -> Result<IntType, Self> {
+        match self {
+            ConcreteType::Int(v) => Ok(v),
+            _ => Err(self)
+        }
+    }
+
     pub(super) fn as_short_string(&self) -> String {
         use ConcreteType::*;
         match self {
