@@ -12,10 +12,20 @@ pub enum Value {
 }
 
 pub enum Cexp {
-    App3(MangledId, Value, Value),        // f x k
-    App2(MangledId, Value),               // k x
-    Let(MangledId, Box<Aexp>, Box<Cexp>), // let x = e1 in e2
-    Tuple(Vec<(MangledId, usize)>, Box<Cexp>),
+    App3 {
+        f: MangledId,
+        x: Value,
+        k: MangledId,
+    }, // f x k
+    App2 {
+        k: MangledId,
+        x: Value,
+    }, // k x
+    Let {
+        x: MangledId,
+        e1: Box<Aexp>,
+        e2: Box<Cexp>,
+    }, // let x = e1 in e2
     Extract(MangledId, usize, usize, Box<Cexp>),
 }
 
@@ -23,6 +33,7 @@ pub enum Aexp {
     Val(Value),
     Abs2(MangledId, MangledId, Box<Cexp>), // \x k -> e
     Abs1(MangledId, Box<Cexp>),            // \x -> e
+    Tuple(Vec<(Value, usize)>),            // (e1, e2, ...)
 }
 
 impl Cexp {
@@ -31,7 +42,7 @@ impl Cexp {
         match e.e {
             Variable(_) | IntConstant(_) => {
                 let v = Value::from_expression(e).unwrap();
-                Cexp::App2(c, v)
+                Cexp::App2 { k: c, x: v }
             }
             Abstraction(l) => {
                 // [[\x -> e | c]] = c (\x k -> [[e | k]])
@@ -40,11 +51,14 @@ impl Cexp {
                 let cbody = Cexp::from_expression(body, k.to_owned());
                 let new_lambda = Aexp::Abs2(x, k, Box::new(cbody));
                 let tmp = MangledId::new_auto();
-                Cexp::Let(
-                    tmp.to_owned(),
-                    Box::new(new_lambda),
-                    Box::new(Cexp::App2(c, Value::Var(tmp))),
-                )
+                Cexp::Let {
+                    x: tmp.to_owned(),
+                    e1: Box::new(new_lambda),
+                    e2: Box::new(Cexp::App2 {
+                        k: c,
+                        x: Value::Var(tmp),
+                    }),
+                }
             }
             Application(f, e) => {
                 /*
@@ -69,7 +83,11 @@ impl Cexp {
                     (Val(f), Val(e)) => {
                         // f atomic, e atomic => f' e c
                         let fvar = f.try_into_id().unwrap(); // function must be a var here, can't be an int
-                        Cexp::App3(fvar, e, Value::Var(c))
+                        Cexp::App3 {
+                            f: fvar,
+                            x: e,
+                            k: c,
+                        }
                     }
                     (Val(f), Complex(k, e)) => {
                         // f atomic, e complex =>
@@ -79,9 +97,17 @@ impl Cexp {
                         let v = MangledId::new_auto();
                         let lambda = Aexp::Abs1(
                             v.to_owned(),
-                            Box::new(Cexp::App3(fvar, Value::Var(v), Value::Var(c))),
+                            Box::new(Cexp::App3 {
+                                f: fvar,
+                                x: Value::Var(v),
+                                k: c,
+                            }),
                         );
-                        Cexp::Let(k, Box::new(lambda), Box::new(e))
+                        Cexp::Let {
+                            x: k,
+                            e1: Box::new(lambda),
+                            e2: Box::new(e),
+                        }
                     }
                     (Complex(k, f), Val(e)) => {
                         // f complex, e atomic =>
@@ -89,8 +115,12 @@ impl Cexp {
                         //     in [[f|k']]
                         let v = MangledId::new_auto();
                         let lambda =
-                            Aexp::Abs1(v.to_owned(), Box::new(Cexp::App3(v, e, Value::Var(c))));
-                        Cexp::Let(k, Box::new(lambda), Box::new(f))
+                            Aexp::Abs1(v.to_owned(), Box::new(Cexp::App3 { f: v, x: e, k: c }));
+                        Cexp::Let {
+                            x: k,
+                            e1: Box::new(lambda),
+                            e2: Box::new(f),
+                        }
                     }
                     (Complex(kf, f), Complex(ke, e)) => {
                         // f complex, e complex =>
@@ -103,13 +133,25 @@ impl Cexp {
                         let w = MangledId::new_auto();
                         let lambda_kf = Aexp::Abs1(
                             w.to_owned(),
-                            Box::new(Cexp::App3(w, Value::Var(v.to_owned()), Value::Var(c))),
+                            Box::new(Cexp::App3 {
+                                f: w,
+                                x: Value::Var(v.to_owned()),
+                                k: c,
+                            }),
                         );
                         let lambda_ke = Aexp::Abs1(
                             v.to_owned(),
-                            Box::new(Cexp::Let(kf, Box::new(lambda_kf), Box::new(f))),
+                            Box::new(Cexp::Let {
+                                x: kf,
+                                e1: Box::new(lambda_kf),
+                                e2: Box::new(f),
+                            }),
                         );
-                        Cexp::Let(ke, Box::new(lambda_ke), Box::new(e))
+                        Cexp::Let {
+                            x: ke,
+                            e1: Box::new(lambda_ke),
+                            e2: Box::new(e),
+                        }
                     }
                 }
             }
@@ -121,18 +163,57 @@ impl Cexp {
                 //         in [[v|k]]
                 let x = x.name;
                 match into_cexp_if_needed(*v) {
-                    EitherExpr::Val(v) => Cexp::Let(
+                    EitherExpr::Val(v) => Cexp::Let {
                         x,
-                        Box::new(Aexp::Val(v)),
-                        Box::new(Cexp::from_expression(*e, c)),
-                    ),
+                        e1: Box::new(Aexp::Val(v)),
+                        e2: Box::new(Cexp::from_expression(*e, c)),
+                    },
                     EitherExpr::Complex(k, v) => {
                         let lambda = Aexp::Abs1(x, Box::new(Cexp::from_expression(*e, c)));
-                        Cexp::Let(k, Box::new(lambda), Box::new(v))
+                        Cexp::Let {
+                            x: k,
+                            e1: Box::new(lambda),
+                            e2: Box::new(v),
+                        }
                     }
                 }
             }
-            Record(..) => todo!(),
+            Record(v) => {
+                // [[(e1,e2,...) | c]]
+                let mut result: Vec<(Value, usize)> = Vec::new();
+                let mut closures: Vec<(MangledId, MangledId, Cexp)> = Vec::new();
+                for e in v.into_iter() {
+                    let size = e.t.get_size();
+                    match into_cexp_if_needed(e) {
+                        EitherExpr::Val(v) => {
+                            result.push((v, size));
+                        }
+                        EitherExpr::Complex(k, e) => {
+                            // let k = \e_var -> c (.., e_var, ..) in [[e|k]]
+                            let e_var = MangledId::new_auto();
+                            result.push((Value::Var(e_var.to_owned()), size));
+                            closures.push((k, e_var, e));
+                        }
+                    }
+                }
+                let tuple_var = MangledId::new_auto();
+                let core = Cexp::Let {
+                    x: tuple_var.to_owned(),
+                    e1: Box::new(Aexp::Tuple(result)),
+                    e2: Box::new(Cexp::App2 {
+                        k: c,
+                        x: Value::Var(tuple_var),
+                    }),
+                };
+                // let tuple = closures
+                //     .into_iter()
+                //     .fold(core, |acc, (k, e_var, e)| {
+                //         Cexp::Let { x: k,
+                //             e1: Aexp::Abs1(e_var, Box::new(acc)), e2: e }
+                //         todo!()
+                //     });
+                todo!()
+            }
             Offset(..) => todo!(),
             Switch(..) => todo!(),
             Pmatch(..) => unreachable!(),
@@ -197,24 +278,24 @@ impl fmt::Display for Aexp {
             Aexp::Val(v) => write!(f, "{v}"),
             Aexp::Abs1(v, e) => write!(f, "\\{v} -> {e}"),
             Aexp::Abs2(v, k, e) => write!(f, "\\{v} {k} -> {e}"),
+            Aexp::Tuple(e) => {
+                f.write_str("(");
+                for (var, _size) in e.iter() {
+                    write!(f, "{var},")?;
+                }
+                f.write_str(")")
+            }
         }
     }
 }
 
 impl fmt::Display for Cexp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, fm: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Cexp::App2(g, e) => write!(f, "{g} {e}"),
-            Cexp::App3(g, e, k) => write!(f, "{g} {e} {k}"),
-            Cexp::Let(x, b, e) => write!(f, "let {x} = {b} in {e}"),
-            Cexp::Tuple(v, k) => {
-                write!(f, "{k} (")?;
-                for (var, _size) in v.iter() {
-                    write!(f, "{var},")?;
-                }
-                f.write_str(")")
-            }
-            Cexp::Extract(var, offset, _size, k) => write!(f, "{k} {var}[{offset}]")
+            Cexp::App2 { k, x } => write!(fm, "{k} {x}"),
+            Cexp::App3 { f, x, k } => write!(fm, "{f} {x} {k}"),
+            Cexp::Let { x, e1, e2 } => write!(fm, "let {x} = {e1} in {e2}"),
+            Cexp::Extract(var, offset, _size, k) => write!(fm, "{k} {var}[{offset}]"),
         }
     }
 }
