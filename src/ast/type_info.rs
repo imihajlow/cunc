@@ -360,7 +360,7 @@ impl CompositeExpression<AtomicType> {
 }
 
 impl IntType {
-    pub(super) fn new(signed: bool, bits: IntBits) -> Self {
+    pub fn new(signed: bool, bits: IntBits) -> Self {
         Self { signed, bits }
     }
 

@@ -5,12 +5,13 @@ use crate::ast::ExpressionVariant;
 use crate::ast::MangledId;
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Value {
     Var(MangledId),
     IntConstant(u64, IntType),
 }
 
+#[derive(Debug, PartialEq)]
 pub enum Cexp {
     App3 {
         f: MangledId,
@@ -29,6 +30,7 @@ pub enum Cexp {
     Extract(MangledId, usize, usize, Box<Cexp>),
 }
 
+#[derive(Debug, PartialEq)]
 pub enum Aexp {
     Val(Value),
     Abs2(MangledId, MangledId, Box<Cexp>), // \x k -> e
@@ -180,8 +182,13 @@ impl Cexp {
             }
             Record(v) => {
                 // [[(e1,e2,...) | c]]
+
+                // Tuple is constructed from this.
                 let mut result: Vec<(Value, usize)> = Vec::new();
-                let mut closures: Vec<(MangledId, MangledId, Cexp)> = Vec::new();
+
+                // Closures needed to compute non-trivial tuple entries.
+                // Pairs are (continuation_var, tuple_var, cexp)
+                let mut closures: Vec<(MangledId, MangledId, Cexp)> = Vec::new(); // Closures need
                 for e in v.into_iter() {
                     let size = e.t.get_size();
                     match into_cexp_if_needed(e) {
@@ -197,6 +204,7 @@ impl Cexp {
                     }
                 }
                 let tuple_var = MangledId::new_auto();
+                // "let tuple_var = Tuple(result) in k tuple_var"
                 let core = Cexp::Let {
                     x: tuple_var.to_owned(),
                     e1: Box::new(Aexp::Tuple(result)),
@@ -205,14 +213,18 @@ impl Cexp {
                         x: Value::Var(tuple_var),
                     }),
                 };
-                // let tuple = closures
-                //     .into_iter()
-                //     .fold(core, |acc, (k, e_var, e)| {
-                //         Cexp::Let { x: k,
-                //             e1: Aexp::Abs1(e_var, Box::new(acc)), e2: e }
-                //         todo!()
-                //     });
-                todo!()
+
+                /*
+                    let continuation_var = \tuple_var -> core in cexp
+                */
+
+                closures
+                    .into_iter()
+                    .fold(core, |core, (continuation, tuple_var, cexp)| Cexp::Let {
+                        x: continuation,
+                        e1: Box::new(Aexp::Abs1(tuple_var, Box::new(core))),
+                        e2: Box::new(cexp),
+                    })
             }
             Offset(..) => todo!(),
             Switch(..) => todo!(),
@@ -279,7 +291,7 @@ impl fmt::Display for Aexp {
             Aexp::Abs1(v, e) => write!(f, "\\{v} -> {e}"),
             Aexp::Abs2(v, k, e) => write!(f, "\\{v} {k} -> {e}"),
             Aexp::Tuple(e) => {
-                f.write_str("(");
+                f.write_str("(")?;
                 for (var, _size) in e.iter() {
                     write!(f, "{var},")?;
                 }
@@ -303,9 +315,106 @@ impl fmt::Display for Cexp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::type_info::IntBits;
+    use crate::position::Position;
 
     #[test]
-    fn test_cps() {
-        panic!();
+    fn test_app2() {
+        let u8_type = ConcreteType::Int(IntType::new(false, IntBits::B8));
+        let fn_type =
+            ConcreteType::Function(Box::new(u8_type.to_owned()), Box::new(u8_type.to_owned()));
+        let expr = Expression::<ConcreteType, MangledId> {
+            t: u8_type.to_owned(),
+            p: Position::Unknown,
+            e: ExpressionVariant::Application(
+                Box::new(Expression {
+                    t: fn_type.to_owned(),
+                    p: Position::Unknown,
+                    e: ExpressionVariant::Variable(MangledId::Local("f".to_string())),
+                }),
+                Box::new(Expression {
+                    t: u8_type.to_owned(),
+                    p: Position::Unknown,
+                    e: ExpressionVariant::Variable(MangledId::Local("x".to_string())),
+                }),
+            ),
+        };
+        let cexp = Cexp::from_expression(expr, MangledId::Local("k".to_string()));
+        assert_eq!(
+            cexp,
+            Cexp::App3 {
+                f: MangledId::Local("f".to_string()),
+                x: Value::Var(MangledId::Local("x".to_string())),
+                k: MangledId::Local("k".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn test_app3() {
+        let u8_type = ConcreteType::Int(IntType::new(false, IntBits::B8));
+        let fn_inner_type =
+            ConcreteType::Function(Box::new(u8_type.to_owned()), Box::new(u8_type.to_owned()));
+        let fn_type = ConcreteType::Function(
+            Box::new(u8_type.to_owned()),
+            Box::new(fn_inner_type.to_owned()),
+        );
+        let inner_app = Expression::<ConcreteType, MangledId> {
+            t: fn_inner_type.to_owned(),
+            p: Position::Unknown,
+            e: ExpressionVariant::Application(
+                Box::new(Expression {
+                    t: fn_type.to_owned(),
+                    p: Position::Unknown,
+                    e: ExpressionVariant::Variable(MangledId::Local("f".to_string())),
+                }),
+                Box::new(Expression {
+                    t: u8_type.to_owned(),
+                    p: Position::Unknown,
+                    e: ExpressionVariant::Variable(MangledId::Local("x".to_string())),
+                }),
+            ),
+        };
+        let expr = Expression::<ConcreteType, MangledId> {
+            t: u8_type.to_owned(),
+            p: Position::Unknown,
+            e: ExpressionVariant::Application(
+                Box::new(inner_app),
+                Box::new(Expression {
+                    t: u8_type.to_owned(),
+                    p: Position::Unknown,
+                    e: ExpressionVariant::Variable(MangledId::Local("y".to_string())),
+                }),
+            ),
+        };
+        let cexp = Cexp::from_expression(expr, MangledId::Local("k".to_string()));
+        /* 
+            let auto_k = \auto_f -> auto_f y k in f x auto_k
+        */
+        println!("{}", cexp);
+        if let Cexp::Let { x: k, e1, e2 } = cexp {
+            assert_eq!(
+                *e2,
+                Cexp::App3 {
+                    f: MangledId::Local("f".to_string()),
+                    x: Value::Var(MangledId::Local("x".to_string())),
+                    k
+                }
+            );
+            if let Aexp::Abs1(inner_k, body) = *e1 {
+                assert_eq!(
+                    *body,
+                    Cexp::App3 {
+                        f: inner_k,
+                        x: Value::Var(MangledId::Local("y".to_string())),
+                        k: MangledId::Local("k".to_string())
+                    }
+                );
+            } else {
+                panic!();
+            }
+        } else {
+            panic!();
+        }
     }
 }
